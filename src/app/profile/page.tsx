@@ -2,9 +2,9 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { CVData } from "@/lib/cv-data";
-import HomeClient from "@/components/HomeClient";
+import ProfileClient from "@/components/ProfileClient";
 
-export default async function Home() {
+export default async function ProfilePage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/sign-in");
 
@@ -17,5 +17,5 @@ export default async function Home() {
 
   const cvProfile = user.cvProfile as CVData;
 
-  return <HomeClient cvProfile={cvProfile} />;
+  return <ProfileClient initialProfile={cvProfile} />;
 }
