@@ -15,7 +15,7 @@ export default async function Home() {
 
   if (!user?.onboardingComplete) redirect("/onboarding");
 
-  const cvProfile = user.cvProfile as CVData;
+  const cvProfile = user.cvProfile as unknown as CVData;
 
   return <HomeClient cvProfile={cvProfile} />;
 }
