@@ -151,9 +151,20 @@ export default function OnboardingForm() {
       {/* Sticky header */}
       <header className="bg-white/80 backdrop-blur-sm border-b border-warm-200 sticky top-0 z-10">
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-bold text-warm-900">Review your profile</h1>
-            <p className="text-xs text-warm-400">Make sure everything looks right before continuing</p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setStep("upload")}
+              className="p-2 text-warm-400 hover:text-warm-900 hover:bg-warm-100 rounded-lg transition-colors cursor-pointer"
+              title="Back to upload"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <div>
+              <h1 className="text-lg font-bold text-warm-900">Review your profile</h1>
+              <p className="text-xs text-warm-400">Make sure everything looks right before continuing</p>
+            </div>
           </div>
           <button
             onClick={handleSave}
