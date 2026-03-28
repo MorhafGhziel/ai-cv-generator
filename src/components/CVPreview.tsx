@@ -10,7 +10,8 @@ export default function CVPreview({ data, name, contact }: CVPreviewProps) {
   return (
     <div
       id="cv-preview"
-      className="bg-white text-[#1a1a1a] w-[210mm] mx-auto px-[18mm] py-[14mm] font-[var(--font-inter),_'Inter',_sans-serif] text-[10pt] leading-[1.5]"
+      className="bg-white text-[#1a1a1a] w-[210mm] mx-auto px-[18mm] py-[14mm] text-[10pt] leading-[1.5]"
+      style={{ fontFamily: "'Computer Modern Serif', 'Latin Modern Roman', 'CMU Serif', Georgia, serif" }}
     >
       {/* Header */}
       <div className="mb-4">
