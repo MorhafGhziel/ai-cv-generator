@@ -1,5 +1,5 @@
-@import "tailwindcss";
 @import url("https://cdn.jsdelivr.net/gh/aaaakshat/cm-web-fonts@latest/fonts.css");
+@import "tailwindcss";
 
 @theme inline {
   --color-warm-50: #faf9f7;
