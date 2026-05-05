@@ -12,7 +12,7 @@ import { CVData, TailoredCV } from "@/lib/cv-data";
 interface QA {
   question: string;
   answer: string;
-  explanation: ;
+  explanation: string;
 }
 
 interface HistoryEntry {
