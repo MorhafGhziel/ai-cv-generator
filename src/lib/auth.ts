@@ -7,4 +7,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   adapter: PrismaAdapter(prisma),
   trustHost: true,
+  debug: true,
+  logger: {
+    error(error) {
+      console.error("[AUTH ERROR]", error);
+    },
+    warn(code) {
+      console.warn("[AUTH WARN]", code);
+    },
+    debug(code, metadata) {
+      console.log("[AUTH DEBUG]", code, metadata);
+    },
+  },
 });

@@ -5,7 +5,7 @@ const { auth } = NextAuth(authConfig);
 
 export default auth((req) => {
   const isSignInPage = req.nextUrl.pathname === "/sign-in";
-  const isAuthRoute = req.nextUrl.pathname.startsWith("/api/auth");
+  const isAuthRoute = req.nextUrl.pathname.startsWith("/api/auth") || req.nextUrl.pathname.startsWith("/api/debug");
 
   if (isAuthRoute || isSignInPage) {
     return;
