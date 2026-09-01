@@ -1,64 +1,292 @@
+/* Computer Modern — the serif used for exported CV documents, so downloads
+   match a LaTeX-typeset resume. Only ever applied inside #cv-preview. */
 @import url("https://cdn.jsdelivr.net/gh/aaaakshat/cm-web-fonts@latest/fonts.css");
 @import "tailwindcss";
 
-@theme inline {
-  --color-warm-50: #faf9f7;
-  --color-warm-100: #f5f3f0;
-  --color-warm-200: #e8e5e0;
-  --color-warm-300: #d6d1ca;
-  --color-warm-400: #b5aea4;
-  --color-warm-500: #948c80;
-  --color-warm-600: #7a7268;
-  --color-warm-700: #5e574f;
-  --color-warm-800: #3d3832;
-  --color-warm-900: #1f1c18;
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ==========================================================================
+   Craftly design system — "warm paper"
+
+   Cream canvas, warm charcoal ink, one orange accent. Hairline borders carry
+   separation; shadows stay whisper-light. Colour beyond the accent is
+   decorative only and never used to convey state or hierarchy.
+
+   Everything below lives inside `@layer base` or `@layer components`. That is
+   load-bearing: unlayered CSS outranks every cascade layer, so an unlayered
+   `.font-display { letter-spacing }` would silently beat any `tracking-*`
+   utility placed on the same element.
+   ========================================================================== */
+
+@theme {
+  /* --- Surfaces -------------------------------------------------------- */
+  --color-paper: #fdfbf9; /* page canvas — never pure white */
+  --color-surface: #ffffff; /* cards sitting on the canvas */
+  --color-sunk: #f5f1ec; /* recessed wells: inputs, code, answers */
+  --color-sunk-deep: #ebe5dd;
+
+  /* --- Ink ------------------------------------------------------------- */
+  --color-ink: #1a1714; /* headings, borders, button strokes */
+  --color-ink-soft: #4a423b; /* body copy */
+  --color-ink-muted: #6b625a; /* secondary copy */
+  --color-ink-faint: #9c9088; /* captions, placeholders */
+
+  /* --- Lines ----------------------------------------------------------- */
+  --color-line: #e9e2da;
+  --color-line-strong: #dcd3c8;
+
+  /* --- Accent ---------------------------------------------------------- */
+  --color-flame: #ff6b1f; /* fills, graphics, marker strokes */
+  --color-flame-deep: #d94a05; /* pressed states, depth edges */
+  --color-flame-ink: #b8400a; /* accent as text on cream — AA on paper */
+  --color-flame-soft: #ffeee3; /* tinted wells and ghost buttons */
+
+  /* --- Decorative only. Never encodes meaning. ------------------------- */
+  --color-sky: #2f7df6;
+  --color-mint: #16a75c;
+  --color-grape: #7c5cff;
+  --color-sun: #ffc53d;
+  --color-rose: #ff5d8f;
+
+  /* --- Semantic -------------------------------------------------------- */
+  --color-danger: #c8341f;
+  --color-danger-soft: #fdeeeb;
+
+  /* --- Type ------------------------------------------------------------ */
+  --font-display: var(--font-fraunces), "Iowan Old Style", Georgia, serif;
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+
+  /* --- Breakpoints ----------------------------------------------------- */
+  --breakpoint-xs: 420px;
+
+  /* --- Shape ----------------------------------------------------------- */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-2xl: 36px;
+
+  /* --- Elevation. Deliberately restrained. ----------------------------- */
+  --shadow-card: 0 1px 2px rgba(26, 23, 20, 0.04), 0 2px 16px rgba(26, 23, 20, 0.045);
+  --shadow-lift: 0 2px 4px rgba(26, 23, 20, 0.05), 0 12px 32px rgba(26, 23, 20, 0.08);
+  --shadow-pop: 0 18px 48px rgba(26, 23, 20, 0.14);
+
+  /* --- Motion ---------------------------------------------------------- */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-soft: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-back: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-body {
-  background: var(--color-warm-50);
-  color: var(--color-warm-900);
-  font-family: var(--font-sans), system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    /* Anchored sections clear the sticky header. */
+    scroll-padding-top: 6rem;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--color-paper);
+    color: var(--color-ink-soft);
+    font-family: var(--font-sans);
+    font-feature-settings: "kern", "liga";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  /* Display type is set tight and never bolded past 600 — the serif carries
+     the weight, not the stroke. Sits in `base` so `tracking-*` utilities can
+     still override the default letter-spacing per heading. */
+  .font-display {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    letter-spacing: -0.022em;
+  }
+
+  ::selection {
+    background: var(--color-flame);
+    color: #fff;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-flame);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  /* Only reveal the ring for keyboard users; pointer focus stays quiet. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 999px;
+    border: 3px solid var(--color-paper);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-faint);
+  }
 }
 
-/* Smooth focus rings */
-*:focus-visible {
-  outline: 2px solid var(--color-warm-400);
-  outline-offset: 2px;
-  border-radius: 4px;
+/* ==========================================================================
+   Components
+   ========================================================================== */
+
+@layer components {
+  /* Chunky tactile button. The depth edge is a hard shadow rather than a
+     gradient, so pressing it reads as physical travel — the one idea borrowed
+     wholesale from Duolingo. */
+  .btn-depth {
+    position: relative;
+    box-shadow: 0 4px 0 var(--btn-depth-color, var(--color-flame-deep));
+    transition:
+      transform 120ms var(--ease-out-soft),
+      box-shadow 120ms var(--ease-out-soft),
+      background-color 160ms var(--ease-out-soft);
+  }
+
+  .btn-depth:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 5px 0 var(--btn-depth-color, var(--color-flame-deep));
+  }
+
+  .btn-depth:active:not(:disabled) {
+    transform: translateY(4px);
+    box-shadow: 0 0 0 var(--btn-depth-color, var(--color-flame-deep));
+  }
+
+  .btn-depth:disabled {
+    box-shadow: 0 4px 0 var(--color-line-strong);
+    transform: none;
+  }
+
+  /* A recessed well: inputs, generated answers, quoted job text. */
+  .well {
+    background: var(--color-sunk);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-md);
+  }
+
+  /* Uppercase mono eyebrow. Small, tracked out, always above a heading. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-ink-faint);
+  }
+
+  /* Paper texture: an almost-invisible warm grain that stops large cream
+     areas reading as flat digital fill. */
+  .paper-grain {
+    position: relative;
+  }
+
+  .paper-grain::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.5;
+    background-image: radial-gradient(circle at 1px 1px, rgba(26, 23, 20, 0.05) 1px, transparent 0);
+    background-size: 22px 22px;
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--color-sunk) 25%,
+      var(--color-sunk-deep) 37%,
+      var(--color-sunk) 63%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-warm-300);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-warm-400);
+/* ==========================================================================
+   Keyframes
+   ========================================================================== */
+
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
 }
 
-/* Print styles for clean PDF */
+/* ==========================================================================
+   Accessibility
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .btn-depth:hover:not(:disabled),
+  .btn-depth:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* ==========================================================================
+   Print — the CV document only
+   ========================================================================== */
+
 @media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  body {
+    background: #fff;
+  }
+
   body * {
     visibility: hidden;
   }
+
   #cv-preview,
   #cv-preview * {
     visibility: visible;
   }
+
   #cv-preview {
     position: absolute;
     left: 0;
     top: 0;
     width: 100%;
+    box-shadow: none;
   }
 }
