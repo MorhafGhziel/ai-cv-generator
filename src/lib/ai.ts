@@ -22,11 +22,44 @@ const ATTEMPT_TIMEOUT_MS = 22_000;
 /** An attempt is only worth starting if this much budget remains. */
 const MIN_ATTEMPT_MS = 4_000;
 
-const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-flash-latest"];
-const GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"];
+/**
+ * Model ids rot. Providers retire them on their own schedule, and a hardcoded
+ * list turns that into a silent outage — every call 404s and the app reports a
+ * generic "temporarily unavailable".
+ *
+ * So: explicit versions rather than `-latest` aliases (which route to shared,
+ * frequently-congested pools and returned 503s here), and both lists can be
+ * overridden from the environment without a deploy.
+ *
+ * To see what a key can actually call:
+ *   Gemini — GET https://generativelanguage.googleapis.com/v1beta/models?key=...
+ *   Groq   — GET https://api.groq.com/openai/v1/models  (Bearer auth)
+ */
+function modelsFromEnv(name: string, fallback: string[]): string[] {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = raw.split(",").map((m) => m.trim()).filter(Boolean);
+  return parsed.length > 0 ? parsed : fallback;
+}
+
+// Ordered by what actually answers, not by version number. The newest flash
+// tiers sit behind a shared free-tier pool and return 503 "high demand" far
+// more often than they succeed, so they are not in the default chain — add them
+// via GEMINI_MODELS if that changes.
+const GEMINI_MODELS = modelsFromEnv("GEMINI_MODELS", [
+  "gemini-3.5-flash",
+  "gemini-2.5-flash",
+]);
+
+const GROQ_MODELS = modelsFromEnv("GROQ_MODELS", [
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+  "qwen/qwen3.8-27b",
+]);
 
 type AIFailureReason =
   | "unconfigured"
+  | "no_model"
   | "rate_limited"
   | "timeout"
   | "bad_output"
@@ -44,6 +77,7 @@ export class AIError extends Error {
   get status(): number {
     switch (this.reason) {
       case "unconfigured":
+      case "no_model":
         return 503;
       case "rate_limited":
         return 429;
@@ -57,6 +91,8 @@ export class AIError extends Error {
   static forReason(reason: AIFailureReason): AIError {
     const messages: Record<AIFailureReason, string> = {
       unconfigured: "The AI service isn't configured yet. Add an API key and try again.",
+      no_model:
+        "None of the configured AI models exist any more — providers retire them periodically. The model list needs updating; this isn't something you can fix from here.",
       rate_limited:
         "The free AI tier is busy right now — every model hit its rate limit. Give it a minute and try again.",
       timeout: "The AI took too long to respond. Try again, or shorten the job description.",
@@ -75,6 +111,22 @@ function isRateLimit(message: string): boolean {
     m.includes("quota") ||
     m.includes("rate limit") ||
     m.includes("resource_exhausted")
+  );
+}
+
+/**
+ * A retired or misspelled model id. Worth distinguishing from a transient
+ * outage: no amount of retrying fixes it, and the operator needs to know the
+ * list is stale rather than seeing "temporarily unavailable" forever.
+ */
+function isModelGone(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("model_not_found") ||
+    m.includes("decommissioned") ||
+    m.includes("is no longer") ||
+    m.includes("does not exist") ||
+    (m.includes("404") && m.includes("model"))
   );
 }
 
@@ -159,6 +211,8 @@ async function generateText(prompt: string, deadline: number): Promise<string> {
 
   let sawRateLimit = false;
   let sawTimeout = false;
+  let goneCount = 0;
+  let attempted = 0;
 
   for (const attempt of attempts) {
     const remaining = deadline - Date.now();
@@ -166,6 +220,7 @@ async function generateText(prompt: string, deadline: number): Promise<string> {
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.min(ATTEMPT_TIMEOUT_MS, remaining));
+    attempted++;
 
     try {
       const text = await attempt.run(prompt, controller.signal);
@@ -178,11 +233,21 @@ async function generateText(prompt: string, deadline: number): Promise<string> {
       } else {
         const msg = short(error);
         if (isRateLimit(msg)) sawRateLimit = true;
+        if (isModelGone(msg)) goneCount++;
         console.warn(`[ai] ${attempt.provider}/${attempt.model} failed: ${msg}`);
       }
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  // Every model we managed to try is gone — the list is stale, not the service.
+  if (attempted > 0 && goneCount === attempted) {
+    console.error(
+      "[ai] every configured model was rejected as missing or retired. " +
+        "Set GEMINI_MODELS / GROQ_MODELS, or update the defaults in src/lib/ai.ts.",
+    );
+    throw AIError.forReason("no_model");
   }
 
   if (sawRateLimit) throw AIError.forReason("rate_limited");

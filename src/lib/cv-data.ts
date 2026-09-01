@@ -105,9 +105,15 @@ const emptyEducation = { degree: "", school: "", location: "", year: "" };
  * field that *fails* validation doesn't just get skipped for one render, it
  * gets written back as deleted. One 601-character bullet must not cost the user
  * an entire job.
+ *
+ * The `.optional()` is load-bearing too. In zod 4 a transform makes an object
+ * key *required*: a bare `z.unknown().transform(...)` rejects a missing key with
+ * "expected nonoptional, received undefined". Models routinely omit fields they
+ * have nothing to say about, so without it every lenient schema — the ones whose
+ * entire job is tolerating partial output — behaved as a strict one.
  */
 function clamped(max: number) {
-  return z.unknown().transform((value) => {
+  return z.unknown().optional().transform((value) => {
     if (typeof value === "string") return value.trim().slice(0, max);
     if (typeof value === "number" || typeof value === "boolean") return String(value).slice(0, max);
     return "";
@@ -116,7 +122,7 @@ function clamped(max: number) {
 
 /** An array of strings, each clamped, the array itself capped. Never fails. */
 function clampedList(max: number, itemMax: number) {
-  return z.unknown().transform((value) => {
+  return z.unknown().optional().transform((value) => {
     if (!Array.isArray(value)) return [];
     return value
       .slice(0, max)
@@ -131,7 +137,7 @@ function clampedList(max: number, itemMax: number) {
  * being slightly too long.
  */
 function lenientArray<T extends z.ZodTypeAny>(item: T, max: number) {
-  return z.unknown().transform((raw): z.output<T>[] => {
+  return z.unknown().optional().transform((raw): z.output<T>[] => {
     if (!Array.isArray(raw)) return [];
     return raw
       .slice(0, max)

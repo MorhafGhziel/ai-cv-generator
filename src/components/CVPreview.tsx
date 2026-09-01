@@ -33,7 +33,7 @@ export default function CVPreview({ data, name, contact }: CVPreviewProps) {
       className="mx-auto w-[210mm] bg-white px-[18mm] py-[15mm] text-[10pt] leading-[1.5] text-[#1a1a1a]"
       style={{ fontFamily: CM_STACK }}
     >
-      <header className="mb-4">
+      <header className="mb-4 break-inside-avoid">
         <h1 className="text-[23pt] font-semibold leading-[1.1] tracking-[-0.02em] text-[#111]">
           {name || "Your name"}
         </h1>
@@ -83,8 +83,14 @@ export default function CVPreview({ data, name, contact }: CVPreviewProps) {
 
       {data.experience.length > 0 && (
         <Section title="Experience">
+          {/* Each role carries `break-inside-avoid`: one job is small enough to
+              keep whole, so a company never gets separated from its own bullets
+              across a page boundary. */}
           {data.experience.map((job, i) => (
-            <div key={`${job.company}-${job.period}-${i}`} className="mb-3 last:mb-0">
+            <div
+              key={`${job.company}-${job.period}-${i}`}
+              className="mb-3 break-inside-avoid last:mb-0"
+            >
               <div className="flex items-baseline justify-between gap-4">
                 <span className="text-[10pt] font-semibold text-[#111]">{job.company}</span>
                 {job.location && (
@@ -120,7 +126,7 @@ export default function CVPreview({ data, name, contact }: CVPreviewProps) {
       {data.projects.length > 0 && (
         <Section title="Projects">
           {data.projects.map((project, i) => (
-            <div key={`${project.name}-${i}`} className="mb-2 last:mb-0 text-[9.5pt]">
+            <div key={`${project.name}-${i}`} className="mb-2 break-inside-avoid last:mb-0 text-[9.5pt]">
               <span className="font-semibold text-[#111]">{project.name}</span>
               {project.description && <span className="text-[#444]"> — {project.description}</span>}
             </div>
@@ -167,8 +173,12 @@ export default function CVPreview({ data, name, contact }: CVPreviewProps) {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="mt-3 break-inside-avoid">
-      <h2 className="mb-2 border-b border-[#ddd] pb-1 text-[11pt] font-semibold uppercase tracking-[0.08em] text-[#111]">
+    <section className="mt-3">
+      {/* `break-after-avoid` keeps a heading from being orphaned at the foot of
+          a page. The section itself must stay breakable: Experience can run to
+          seven roles, and forbidding a break inside it pushes the whole block
+          to the next page, leaving most of a page blank. */}
+      <h2 className="mb-2 break-after-avoid border-b border-[#ddd] pb-1 text-[11pt] font-semibold uppercase tracking-[0.08em] text-[#111]">
         {title}
       </h2>
       {children}
