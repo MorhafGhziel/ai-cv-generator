@@ -15,9 +15,16 @@ model User {
   image         String?
   accounts      Account[]
   sessions      Session[]
+
   cvProfile          Json?
-  onboardingComplete Boolean   @default(false)
-  cvEntries          CvEntry[]
+  onboardingComplete Boolean @default(false)
+
+  // Application preferences used to personalise generated answers.
+  // Previously these were hardcoded into the prompt for a single user.
+  preferences Json?
+
+  cvEntries    CvEntry[]
+  usageEvents  UsageEvent[]
 }
 
 model Account {
@@ -37,6 +44,7 @@ model Account {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model Session {
@@ -46,6 +54,8 @@ model Session {
   expires      DateTime
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model VerificationToken {
@@ -62,10 +72,29 @@ model CvEntry {
   userId         String   @db.ObjectId
   jobSnippet     String
   jobDescription String
+  targetCompany  String?
+  targetRole     String?
   cvData         Json
+  /// Generated screening-form answers, saved so they survive a reload.
+  answers        Json?
   createdAt      DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+/// One row per billable AI call. Backs the free-tier rate limiter:
+/// a sliding window + daily quota computed with a count over `createdAt`.
+/// Rows older than the widest window are pruned opportunistically.
+model UsageEvent {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  action    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, action, createdAt])
+  @@index([createdAt])
 }
