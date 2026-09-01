@@ -1,6 +1,12 @@
 datasource db {
-  provider = "mongodb"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // The app talks to the pooled endpoint: many short-lived connections from
+  // serverless functions are exactly what PgBouncer is for.
+  url       = env("DATABASE_URL")
+  // Schema changes need a real session. PgBouncer in transaction mode cannot
+  // hold the advisory locks `db push` and `migrate` take out, so those go
+  // straight to the compute endpoint.
+  directUrl = env("DIRECT_URL")
 }
 
 generator client {
@@ -8,7 +14,7 @@ generator client {
 }
 
 model User {
-  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  id            String    @id @default(cuid())
   name          String?
   email         String?   @unique
   emailVerified DateTime?
@@ -19,26 +25,28 @@ model User {
   cvProfile          Json?
   onboardingComplete Boolean @default(false)
 
-  // Application preferences used to personalise generated answers.
-  // Previously these were hardcoded into the prompt for a single user.
+  /// Application preferences used to personalise generated answers.
+  /// Previously these were hardcoded into the prompt for a single user.
   preferences Json?
 
-  cvEntries    CvEntry[]
-  usageEvents  UsageEvent[]
+  cvEntries   CvEntry[]
+  usageEvents UsageEvent[]
 }
 
 model Account {
-  id                String  @id @default(auto()) @map("_id") @db.ObjectId
-  userId            String  @db.ObjectId
+  id                String  @id @default(cuid())
+  userId            String
   type              String
   provider          String
   providerAccountId String
-  refresh_token     String?
-  access_token      String?
+  // OAuth tokens routinely exceed the default varchar length — a Google
+  // id_token is a JWT of well over a kilobyte — so these are explicitly text.
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String?
+  id_token          String? @db.Text
   session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -48,9 +56,9 @@ model Account {
 }
 
 model Session {
-  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  id           String   @id @default(cuid())
   sessionToken String   @unique
-  userId       String   @db.ObjectId
+  userId       String
   expires      DateTime
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -59,7 +67,6 @@ model Session {
 }
 
 model VerificationToken {
-  id         String   @id @default(auto()) @map("_id") @db.ObjectId
   identifier String
   token      String   @unique
   expires    DateTime
@@ -68,10 +75,10 @@ model VerificationToken {
 }
 
 model CvEntry {
-  id             String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId         String   @db.ObjectId
+  id             String   @id @default(cuid())
+  userId         String
   jobSnippet     String
-  jobDescription String
+  jobDescription String   @db.Text
   targetCompany  String?
   targetRole     String?
   cvData         Json
@@ -88,8 +95,8 @@ model CvEntry {
 /// a sliding window + daily quota computed with a count over `createdAt`.
 /// Rows older than the widest window are pruned opportunistically.
 model UsageEvent {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId    String   @db.ObjectId
+  id        String   @id @default(cuid())
+  userId    String
   action    String
   createdAt DateTime @default(now())
 
