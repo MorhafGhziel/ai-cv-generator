@@ -1,146 +1,177 @@
-import { CVData, TailoredCV } from "@/lib/cv-data";
+import type { Contact, TailoredCV } from "@/lib/cv-data";
+
+/**
+ * The exported document itself — not app chrome.
+ *
+ * Deliberately plain: one column, Computer Modern, A4 metrics, no colour and
+ * no icons. That is what parses cleanly in applicant tracking systems and what
+ * reads as a document a person wrote. Every section is omitted when empty, so
+ * a partial generation never leaves a heading with nothing under it.
+ */
 
 interface CVPreviewProps {
   data: TailoredCV;
   name: string;
-  contact: CVData["contact"];
+  contact: Contact;
 }
 
+const CM_STACK =
+  "'Computer Modern Serif', 'Latin Modern Roman', 'CMU Serif', Georgia, 'Times New Roman', serif";
+
 export default function CVPreview({ data, name, contact }: CVPreviewProps) {
+  const links = [
+    { label: "GitHub", href: contact.github },
+    { label: "LinkedIn", href: contact.linkedin },
+    { label: "Portfolio", href: contact.website },
+  ].filter((link) => link.href);
+
+  const details = [contact.email, contact.phone, contact.location].filter(Boolean);
+
   return (
     <div
       id="cv-preview"
-      className="bg-white text-[#1a1a1a] w-[210mm] mx-auto px-[18mm] py-[14mm] text-[10pt] leading-[1.5]"
-      style={{ fontFamily: "'Computer Modern Serif', 'Latin Modern Roman', 'CMU Serif', Georgia, serif" }}
+      className="mx-auto w-[210mm] bg-white px-[18mm] py-[15mm] text-[10pt] leading-[1.5] text-[#1a1a1a]"
+      style={{ fontFamily: CM_STACK }}
     >
-      {/* Header */}
-      <div className="mb-4">
-        <h1 className="text-[24pt] font-semibold tracking-[-0.02em] text-[#111]">
-          {name}
+      <header className="mb-4">
+        <h1 className="text-[23pt] font-semibold leading-[1.1] tracking-[-0.02em] text-[#111]">
+          {name || "Your name"}
         </h1>
-        <div className="flex items-center gap-1.5 text-[8.5pt] text-[#555] mt-1.5 flex-wrap">
-          <span>{contact.email}</span>
-          <span className="text-[#ccc]">|</span>
-          <span>{contact.phone}</span>
-          <span className="text-[#ccc]">|</span>
-          <span>{contact.location}</span>
-          {contact.github && (
-            <>
-              <span className="text-[#ccc]">|</span>
-              <a href={contact.github} className="text-[#555] no-underline hover:text-[#111]">GitHub</a>
-            </>
-          )}
-          {contact.linkedin && (
-            <>
-              <span className="text-[#ccc]">|</span>
-              <a href={contact.linkedin} className="text-[#555] no-underline hover:text-[#111]">LinkedIn</a>
-            </>
-          )}
-          {contact.website && (
-            <>
-              <span className="text-[#ccc]">|</span>
-              <a href={contact.website} className="text-[#555] no-underline hover:text-[#111]">Portfolio</a>
-            </>
-          )}
-        </div>
-      </div>
 
-      {/* Summary */}
-      <Section title="Summary">
-        <p className="text-[9.5pt] text-[#333] leading-[1.6]">{data.summary}</p>
-      </Section>
+        {(details.length > 0 || links.length > 0) && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[8.5pt] text-[#555]">
+            {details.map((detail, i) => (
+              <span key={detail} className="flex items-center gap-2">
+                {i > 0 && <span className="text-[#ccc]">|</span>}
+                {detail}
+              </span>
+            ))}
+            {links.map((link, i) => (
+              <span key={link.label} className="flex items-center gap-2">
+                {(details.length > 0 || i > 0) && <span className="text-[#ccc]">|</span>}
+                <a href={link.href} className="text-[#555] no-underline">
+                  {link.label}
+                </a>
+              </span>
+            ))}
+          </div>
+        )}
+      </header>
 
-      {/* Skills */}
-      <Section title="Skills">
-        <div className="space-y-1">
-          {data.skills.map((group) => (
-            <div key={group.category} className="text-[9.5pt]">
-              <span className="font-semibold text-[#222]">{group.category}: </span>
-              <span className="text-[#444]">{group.items.join("  ·  ")}</span>
+      {data.summary && (
+        <Section title="Summary">
+          <p className="text-[9.5pt] leading-[1.6] text-[#333]">{data.summary}</p>
+        </Section>
+      )}
+
+      {data.skills.length > 0 && (
+        <Section title="Skills">
+          <div className="space-y-[3px]">
+            {data.skills
+              .filter((group) => group.items.length > 0)
+              .map((group) => (
+                <div key={group.category} className="text-[9.5pt]">
+                  {group.category && (
+                    <span className="font-semibold text-[#222]">{group.category}: </span>
+                  )}
+                  <span className="text-[#444]">{group.items.join("  ·  ")}</span>
+                </div>
+              ))}
+          </div>
+        </Section>
+      )}
+
+      {data.experience.length > 0 && (
+        <Section title="Experience">
+          {data.experience.map((job, i) => (
+            <div key={`${job.company}-${job.period}-${i}`} className="mb-3 last:mb-0">
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="text-[10pt] font-semibold text-[#111]">{job.company}</span>
+                {job.location && (
+                  <span className="shrink-0 text-[8.5pt] text-[#777]">{job.location}</span>
+                )}
+              </div>
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="text-[9.5pt] italic text-[#444]">{job.title}</span>
+                {job.period && (
+                  <span className="shrink-0 text-[8.5pt] text-[#777]">{job.period}</span>
+                )}
+              </div>
+
+              {job.bullets.length > 0 && (
+                <ul className="ml-4 mt-1 space-y-[2px] text-[9.5pt] text-[#333]">
+                  {job.bullets.map((bullet, index) => (
+                    <li
+                      key={index}
+                      className="relative pl-3 before:absolute before:left-0 before:text-[#999] before:content-['–']"
+                    >
+                      {bullet}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {job.link && <p className="ml-7 mt-[2px] text-[8pt] text-[#999]">{job.link}</p>}
             </div>
           ))}
-        </div>
-      </Section>
+        </Section>
+      )}
 
-      {/* Experience */}
-      <Section title="Experience">
-        {data.experience.map((job) => (
-          <div key={`${job.company}-${job.period}`} className="mb-3">
-            <div className="flex justify-between items-baseline">
-              <span className="font-semibold text-[10pt] text-[#111]">{job.company}</span>
-              <span className="text-[8.5pt] text-[#777] shrink-0 ml-4">{job.location}</span>
+      {data.projects.length > 0 && (
+        <Section title="Projects">
+          {data.projects.map((project, i) => (
+            <div key={`${project.name}-${i}`} className="mb-2 last:mb-0 text-[9.5pt]">
+              <span className="font-semibold text-[#111]">{project.name}</span>
+              {project.description && <span className="text-[#444]"> — {project.description}</span>}
             </div>
-            <div className="flex justify-between items-baseline mt-[-1px]">
-              <span className="text-[9.5pt] text-[#444] italic">{job.title}</span>
-              <span className="text-[8.5pt] text-[#777] shrink-0 ml-4">{job.period}</span>
-            </div>
-            <ul className="mt-1 text-[9.5pt] text-[#333] space-y-0.5 ml-4">
-              {job.bullets.map((bullet, i) => (
-                <li key={i} className="relative pl-3 before:content-['–'] before:absolute before:left-0 before:text-[#999]">
-                  {bullet}
+          ))}
+        </Section>
+      )}
+
+      {(data.education.degree || data.education.school) && (
+        <Section title="Education">
+          <div className="flex items-baseline justify-between gap-4">
+            <span className="text-[10pt] font-semibold text-[#111]">{data.education.degree}</span>
+            {data.education.location && (
+              <span className="shrink-0 text-[8.5pt] text-[#777]">{data.education.location}</span>
+            )}
+          </div>
+          <div className="flex items-baseline justify-between gap-4">
+            <span className="text-[9.5pt] text-[#444]">{data.education.school}</span>
+            {data.education.year && (
+              <span className="shrink-0 text-[8.5pt] text-[#777]">{data.education.year}</span>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {data.additionalSections
+        ?.filter((section) => section.title && section.items.length > 0)
+        .map((section) => (
+          <Section key={section.title} title={section.title}>
+            <ul className="ml-4 space-y-[2px] text-[9.5pt] text-[#333]">
+              {section.items.map((item, index) => (
+                <li
+                  key={index}
+                  className="relative pl-3 before:absolute before:left-0 before:text-[#999] before:content-['–']"
+                >
+                  {item}
                 </li>
               ))}
             </ul>
-            {job.link && (
-              <div className="text-[8pt] text-[#999] mt-0.5 ml-4 pl-3">
-                {job.link}
-              </div>
-            )}
-          </div>
+          </Section>
         ))}
-      </Section>
-
-      {/* Projects */}
-      <Section title="Projects">
-        {data.projects.map((project) => (
-          <div key={project.name} className="mb-2">
-            <span className="font-semibold text-[9.5pt] text-[#111]">{project.name}</span>
-            <span className="text-[9.5pt] text-[#444]"> — {project.description}</span>
-          </div>
-        ))}
-      </Section>
-
-      {/* Education */}
-      <Section title="Education">
-        <div className="flex justify-between items-baseline">
-          <span className="font-semibold text-[10pt] text-[#111]">{data.education.degree}</span>
-          <span className="text-[8.5pt] text-[#777] shrink-0 ml-4">{data.education.location}</span>
-        </div>
-        <div className="flex justify-between items-baseline mt-[-1px]">
-          <span className="text-[9.5pt] text-[#444]">{data.education.school}</span>
-          <span className="text-[8.5pt] text-[#777] shrink-0 ml-4">{data.education.year}</span>
-        </div>
-      </Section>
-
-      {/* Additional Sections */}
-      {data.additionalSections?.map((section) => (
-        <Section key={section.title} title={section.title}>
-          <ul className="text-[9.5pt] text-[#333] space-y-0.5 ml-4">
-            {section.items.map((item, i) => (
-              <li key={i} className="relative pl-3 before:content-['–'] before:absolute before:left-0 before:text-[#999]">
-                {item}
-              </li>
-            ))}
-          </ul>
-        </Section>
-      ))}
     </div>
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="mt-3">
-      <h2 className="text-[11pt] font-semibold uppercase tracking-[0.08em] text-[#111] border-b border-[#ddd] pb-1 mb-2">
+    <section className="mt-3 break-inside-avoid">
+      <h2 className="mb-2 border-b border-[#ddd] pb-1 text-[11pt] font-semibold uppercase tracking-[0.08em] text-[#111]">
         {title}
       </h2>
       {children}
-    </div>
+    </section>
   );
 }
