@@ -1,25 +1,43 @@
-import { auth } from "@/lib/auth";
+import { NextResponse } from "next/server";
+import { ApiError, handler, requireUserId } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
-import { NextRequest, NextResponse } from "next/server";
 
-export async function DELETE(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const runtime = "nodejs";
 
+type Ctx = { params: Promise<{ id: string }> };
+
+export const GET = handler<Ctx>(async (_req, { params }) => {
+  const userId = await requireUserId();
   const { id } = await params;
 
-  // Ensure the entry belongs to the user
-  const entry = await prisma.cvEntry.findUnique({ where: { id } });
-  if (!entry || entry.userId !== session.user.id) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  // Scoping the lookup by userId means a wrong id and someone else's id are
+  // indistinguishable from the outside.
+  const entry = await prisma.cvEntry.findFirst({
+    where: { id, userId },
+    select: {
+      id: true,
+      jobSnippet: true,
+      jobDescription: true,
+      targetCompany: true,
+      targetRole: true,
+      cvData: true,
+      answers: true,
+      createdAt: true,
+    },
+  });
 
-  await prisma.cvEntry.delete({ where: { id } });
+  if (!entry) throw new ApiError(404, "That application no longer exists.");
+  return NextResponse.json(entry);
+});
+
+export const DELETE = handler<Ctx>(async (_req, { params }) => {
+  const userId = await requireUserId();
+  const { id } = await params;
+
+  // deleteMany scoped by userId does the ownership check and the delete in one
+  // atomic statement, closing the read-then-write gap of a findUnique + delete.
+  const { count } = await prisma.cvEntry.deleteMany({ where: { id, userId } });
+  if (count === 0) throw new ApiError(404, "That application no longer exists.");
 
   return NextResponse.json({ success: true });
-}
+});
