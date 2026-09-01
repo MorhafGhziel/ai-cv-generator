@@ -1,12 +1,14 @@
 import { redirect } from "next/navigation";
+import ProfileClient from "@/components/app/ProfileClient";
 import { auth } from "@/lib/auth";
+import { toCVData } from "@/lib/cv-data";
 import { prisma } from "@/lib/prisma";
-import { CVData } from "@/lib/cv-data";
-import ProfileClient from "@/components/ProfileClient";
+
+export const metadata = { title: "Your CV" };
 
 export default async function ProfilePage() {
   const session = await auth();
-  if (!session?.user?.id) redirect("/sign-in");
+  if (!session?.user?.id) redirect("/sign-in?callbackUrl=/profile");
 
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
@@ -15,7 +17,5 @@ export default async function ProfilePage() {
 
   if (!user?.onboardingComplete) redirect("/onboarding");
 
-  const cvProfile = user.cvProfile as unknown as CVData;
-
-  return <ProfileClient initialProfile={cvProfile} />;
+  return <ProfileClient initialProfile={toCVData(user.cvProfile)} />;
 }

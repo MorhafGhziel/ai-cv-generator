@@ -1,21 +1,12 @@
-import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
-import { CVData } from "@/lib/cv-data";
-import HomeClient from "@/components/HomeClient";
+import Landing from "@/components/landing/Landing";
 
-export default async function Home() {
+/**
+ * The marketing page is public and stays reachable when signed in — the header
+ * simply swaps its call to action for a link into the app, rather than
+ * redirecting people away from a page they asked for.
+ */
+export default async function HomePage() {
   const session = await auth();
-  if (!session?.user?.id) redirect("/sign-in");
-
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { cvProfile: true, onboardingComplete: true },
-  });
-
-  if (!user?.onboardingComplete) redirect("/onboarding");
-
-  const cvProfile = user.cvProfile as unknown as CVData;
-
-  return <HomeClient cvProfile={cvProfile} />;
+  return <Landing signedIn={Boolean(session?.user?.id)} />;
 }

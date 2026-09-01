@@ -1,69 +1,149 @@
-import { signIn } from "@/lib/auth";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { WelcomeSpot } from "@/components/art/Spots";
+import { buttonClass } from "@/components/ui/Button";
+import { ArrowLeftIcon, GoogleIcon } from "@/components/ui/Icons";
+import { LogoMark } from "@/components/ui/Logo";
+import { FadeIn } from "@/components/ui/Motion";
+import { auth, signIn } from "@/lib/auth";
 
-export default function SignInPage() {
+export const metadata = { title: "Sign in" };
+
+/**
+ * Only same-origin paths are accepted, so the callback cannot be an open
+ * redirect.
+ *
+ * Checking for a leading `//` is not enough: browsers normalise a backslash to
+ * a forward slash in special schemes, so `/\evil.com` resolves to `//evil.com`
+ * and sends the user off-site. Both separators are rejected.
+ */
+function safeCallback(value: string | undefined): string {
+  if (!value || value[0] !== "/") return "/dashboard";
+  if (value[1] === "/" || value[1] === "\\") return "/dashboard";
+  return value;
+}
+
+/**
+ * Auth.js error codes, translated into what the reader should actually do.
+ * `Configuration` in particular means something is wrong on the server — the
+ * database is unreachable, or a key is missing — so telling someone to try
+ * again is bad advice; retrying can never fix it.
+ */
+const ERROR_MESSAGES: Record<string, string> = {
+  Configuration:
+    "We couldn't reach our database, so sign-in can't complete. This is on our side — nothing you do differently will help. Please try again in a few minutes.",
+  AccessDenied: "You cancelled the sign-in, or Google declined the request. You can try again below.",
+  Verification: "That sign-in link has expired or was already used. Start again below.",
+  OAuthAccountNotLinked:
+    "That email is already registered through a different sign-in method. Use the method you signed up with.",
+};
+
+const DEFAULT_ERROR = "That sign-in didn't go through. Please try again.";
+
+export default async function SignInPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ callbackUrl?: string; error?: string }>;
+}) {
+  const session = await auth();
+  const { callbackUrl, error } = await searchParams;
+  const redirectTo = safeCallback(callbackUrl);
+
+  if (session?.user?.id) redirect(redirectTo);
+
   return (
-    <div className="min-h-screen bg-warm-50 flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
-        {/* Logo / Brand */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 bg-warm-900 rounded-xl mb-4">
-            <svg className="w-6 h-6 text-warm-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
+    <div className="flex min-h-screen flex-col bg-paper">
+      <header className="mx-auto flex h-[68px] w-full max-w-[1180px] items-center px-5 sm:px-8">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 rounded-lg py-2 text-[13.5px] text-ink-muted transition-colors hover:text-ink"
+        >
+          <ArrowLeftIcon className="text-[16px]" />
+          Back
+        </Link>
+      </header>
+
+      <main className="flex flex-1 items-center justify-center px-5 pb-24">
+        <FadeIn className="w-full max-w-[400px]">
+          <div className="text-center">
+            <div className="flex justify-center">
+              <WelcomeSpot size={100} />
+            </div>
+            <h1 className="font-display mt-6 text-[34px] font-medium leading-[1.1] tracking-[-0.04em] text-ink">
+              Welcome to craftly
+            </h1>
+            <p className="mt-3 text-[15px] leading-[1.6] text-ink-muted">
+              One CV in. A tailored one out, for every role you apply to.
+            </p>
           </div>
-          <h1 className="text-2xl font-bold text-warm-900 tracking-tight">
-            Craftly
-          </h1>
-          <p className="text-sm text-warm-500 mt-1">
-            Your AI-powered CV workshop
-          </p>
-        </div>
 
-        {/* Card */}
-        <div className="bg-white rounded-2xl border border-warm-200 p-8 shadow-sm">
-          <h2 className="text-lg font-semibold text-warm-900 text-center mb-1">
-            Welcome back
-          </h2>
-          <p className="text-sm text-warm-500 text-center mb-6">
-            Sign in to craft tailored CVs for every opportunity.
-          </p>
-          <form
-            action={async () => {
-              "use server";
-              await signIn("google", { redirectTo: "/" });
-            }}
-          >
-            <button
-              type="submit"
-              className="w-full flex items-center justify-center gap-3 px-4 py-3 bg-white border border-warm-200 rounded-xl text-sm font-medium text-warm-700 hover:bg-warm-50 hover:border-warm-300 transition-all cursor-pointer shadow-sm"
+          <div className="mt-9 rounded-[24px] border border-line bg-surface p-6 shadow-[var(--shadow-card)]">
+            {error && (
+              <p
+                role="alert"
+                className="mb-5 rounded-[12px] border border-[color:color-mix(in_srgb,var(--color-danger)_25%,transparent)] bg-danger-soft px-4 py-3 text-[13px] leading-relaxed text-danger"
+              >
+                {ERROR_MESSAGES[error] ?? DEFAULT_ERROR}
+              </p>
+            )}
+
+            <form
+              action={async () => {
+                "use server";
+                await signIn("google", { redirectTo });
+              }}
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24">
-                <path
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
-                  fill="#4285F4"
-                />
-                <path
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                  fill="#34A853"
-                />
-                <path
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                  fill="#FBBC05"
-                />
-                <path
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                  fill="#EA4335"
-                />
-              </svg>
-              Continue with Google
-            </button>
-          </form>
+              <button
+                type="submit"
+                className={buttonClass("secondary", "lg", "w-full")}
+              >
+                <GoogleIcon className="text-[1.25em]" />
+                Continue with Google
+              </button>
+            </form>
 
-          <p className="text-xs text-warm-400 text-center mt-5">
-            We only access your name and email. Nothing else.
-          </p>
-        </div>
-      </div>
+            <p className="mt-5 text-center text-[12px] leading-relaxed text-ink-faint">
+              We read your name and email address, nothing else. No posting, no contacts, no
+              calendar.
+            </p>
+          </div>
+
+          <ul className="mt-8 space-y-2.5">
+            {[
+              "Free — no card, no trial",
+              "Your CV is never used to train a model",
+              "Delete any application permanently, any time",
+            ].map((item) => (
+              <li key={item} className="flex items-start gap-2.5 text-[13px] text-ink-muted">
+                <span className="mt-[3px] flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-flame-soft">
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-2.5 w-2.5 text-flame-ink"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={3.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m5 12.5 4.5 4.5L19 7" />
+                  </svg>
+                </span>
+                {item}
+              </li>
+            ))}
+          </ul>
+        </FadeIn>
+      </main>
+
+      <footer className="pb-8 text-center">
+        <Link href="/" className="inline-flex items-center gap-2 opacity-60 transition-opacity hover:opacity-100">
+          <LogoMark size={20} />
+          <span className="font-display text-[13px] font-semibold tracking-[-0.02em] text-ink">
+            craftly
+          </span>
+        </Link>
+      </footer>
     </div>
   );
 }

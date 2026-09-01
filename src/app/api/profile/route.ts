@@ -1,32 +1,24 @@
-import { auth } from "@/lib/auth";
+import { NextResponse } from "next/server";
+import { handler, readJson, requireUserId } from "@/lib/api";
+import { cvDataSchema } from "@/lib/cv-data";
 import { prisma } from "@/lib/prisma";
-import { NextRequest, NextResponse } from "next/server";
 
-export async function PUT(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const runtime = "nodejs";
 
-  try {
-    const profile = await req.json();
+/**
+ * Replaces the base profile. The body is validated against the full CV schema
+ * before it touches the database — previously any JSON at all was accepted and
+ * written straight into `cvProfile`, which could leave the app rendering a
+ * profile with no name.
+ */
+export const PUT = handler(async (req) => {
+  const userId = await requireUserId();
+  const profile = await readJson(req, cvDataSchema);
 
-    if (!profile.name || !profile.contact) {
-      return NextResponse.json(
-        { error: "Name and contact info are required" },
-        { status: 400 }
-      );
-    }
+  await prisma.user.update({
+    where: { id: userId },
+    data: { cvProfile: profile },
+  });
 
-    await prisma.user.update({
-      where: { id: session.user.id },
-      data: { cvProfile: profile },
-    });
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("Update profile error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
-}
+  return NextResponse.json({ success: true, profile });
+});

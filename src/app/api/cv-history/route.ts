@@ -1,37 +1,32 @@
-import { auth } from "@/lib/auth";
+import { NextResponse } from "next/server";
+import { handler, requireUserId } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
-import { NextRequest, NextResponse } from "next/server";
 
-export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const runtime = "nodejs";
+
+/**
+ * Returns the user's applications for the dashboard list.
+ *
+ * `jobDescription` is deliberately excluded — it can run to thousands of words
+ * per entry and the list never renders it. The detail route serves it on demand.
+ */
+export const GET = handler(async () => {
+  const userId = await requireUserId();
 
   const entries = await prisma.cvEntry.findMany({
-    where: { userId: session.user.id },
+    where: { userId },
     orderBy: { createdAt: "desc" },
-  });
-
-  return NextResponse.json(entries);
-}
-
-export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  const { jobSnippet, jobDescription, cvData } = await req.json();
-
-  const entry = await prisma.cvEntry.create({
-    data: {
-      userId: session.user.id,
-      jobSnippet,
-      jobDescription,
-      cvData,
+    take: 100,
+    select: {
+      id: true,
+      jobSnippet: true,
+      targetCompany: true,
+      targetRole: true,
+      createdAt: true,
+      cvData: true,
+      answers: true,
     },
   });
 
-  return NextResponse.json(entry, { status: 201 });
-}
+  return NextResponse.json(entries);
+});

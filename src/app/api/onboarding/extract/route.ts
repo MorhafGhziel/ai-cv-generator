@@ -1,76 +1,66 @@
-import { auth } from "@/lib/auth";
-import { generateWithAI } from "@/lib/ai";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { extractText } from "unpdf";
+import { generateJSON } from "@/lib/ai";
+import { ApiError, consumeQuota, handler, requireUserId } from "@/lib/api";
+import { extractedProfileSchema } from "@/lib/cv-data";
+import { buildExtractPrompt } from "@/lib/prompts";
 
-export async function POST(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
+/** The UI has always promised 10MB; now the server actually enforces it. */
+const MAX_BYTES = 10 * 1024 * 1024;
+/** Long enough for any real CV, short enough to stay inside free-tier context. */
+const MAX_CHARS = 40_000;
+const MIN_CHARS = 50;
+
+export const POST = handler(async (req) => {
+  const userId = await requireUserId();
+
+  let formData: FormData;
   try {
-    const formData = await req.formData();
-    const file = formData.get("pdf") as File | null;
-
-    if (!file || file.type !== "application/pdf") {
-      return NextResponse.json(
-        { error: "Please upload a valid PDF file" },
-        { status: 400 }
-      );
-    }
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const { text: pages } = await extractText(new Uint8Array(buffer));
-    const text = pages.join("\n");
-
-    if (!text || text.trim().length < 50) {
-      return NextResponse.json(
-        { error: "Could not extract enough text from PDF. Please try a different file." },
-        { status: 400 }
-      );
-    }
-
-    const prompt = `You are a CV parser. Extract structured data from the following CV text and return ONLY valid JSON (no markdown, no code fences).
-
-CV TEXT:
-${text}
-
-Return this exact JSON structure, filling in what you find. Use empty strings or empty arrays for missing fields:
-{
-  "name": "Full Name",
-  "contact": {
-    "email": "",
-    "phone": "",
-    "location": "",
-    "github": "",
-    "linkedin": "",
-    "website": ""
-  },
-  "summary": "Professional summary or objective",
-  "skills": [{ "category": "Category Name", "items": ["skill1", "skill2"] }],
-  "experience": [{ "company": "Company", "title": "Job Title", "location": "Location", "period": "Start - End", "bullets": ["achievement 1"], "link": "" }],
-  "projects": [{ "name": "Project Name", "description": "Description" }],
-  "education": { "degree": "Degree", "school": "School Name", "location": "Location", "year": "Year" }
-}`;
-
-    const result = await generateWithAI(prompt);
-    const cleaned = result
-      .replace(/```json\n?/g, "")
-      .replace(/```\n?/g, "")
-      .trim();
-    const jsonStart = cleaned.indexOf("{");
-    const jsonEnd = cleaned.lastIndexOf("}");
-    const jsonStr =
-      jsonStart !== -1 && jsonEnd !== -1
-        ? cleaned.substring(jsonStart, jsonEnd + 1)
-        : cleaned;
-    const profile = JSON.parse(jsonStr);
-
-    return NextResponse.json(profile);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("PDF extract error:", message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    formData = await req.formData();
+  } catch {
+    throw new ApiError(400, "That upload wasn't readable. Try selecting the file again.");
   }
-}
+
+  const file = formData.get("pdf");
+  if (!(file instanceof File)) {
+    throw new ApiError(400, "No file was attached.");
+  }
+
+  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+    throw new ApiError(415, "Only PDF files can be read. Export your CV as a PDF and try again.");
+  }
+
+  if (file.size > MAX_BYTES) {
+    throw new ApiError(413, "That PDF is larger than 10MB. Try exporting it at a smaller size.");
+  }
+
+  if (file.size === 0) {
+    throw new ApiError(400, "That file is empty.");
+  }
+
+  let text: string;
+  try {
+    const { text: pages } = await extractText(new Uint8Array(await file.arrayBuffer()));
+    text = (Array.isArray(pages) ? pages.join("\n") : String(pages)).slice(0, MAX_CHARS);
+  } catch (error) {
+    console.warn("[extract] unpdf failed:", error);
+    throw new ApiError(422, "We couldn't read that PDF. It may be encrypted or corrupted.");
+  }
+
+  if (text.trim().length < MIN_CHARS) {
+    throw new ApiError(
+      422,
+      "That PDF has almost no selectable text — it's probably a scan. Try a text-based export, or fill your profile in by hand.",
+    );
+  }
+
+  // Charged only once the PDF has yielded usable text: parsing is local and
+  // free, so an unreadable file should not cost the user a slice of quota.
+  await consumeQuota(userId, "extract");
+
+  const profile = await generateJSON(buildExtractPrompt(text), extractedProfileSchema);
+  return NextResponse.json(profile);
+});
