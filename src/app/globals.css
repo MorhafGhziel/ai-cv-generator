@@ -124,6 +124,29 @@
     outline: none;
   }
 
+  /* Browsers render <button> with the default arrow cursor, and Tailwind's
+     Preflight deliberately leaves that alone to match native behaviour. In an
+     app where every button is a real action, an arrow reads as "not clickable".
+     Restoring the pointer once here beats repeating a per-element cursor
+     utility across seventeen controls and forgetting it on the eighteenth.
+     Utilities outrank `base`, so a disabled variant still wins where set.
+
+     Class names are deliberately not spelled out above: Tailwind scans comments
+     too, and naming one here would generate an otherwise-unused utility. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  select:not(:disabled),
+  label[for],
+  summary {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  select:disabled,
+  [role="button"][aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
