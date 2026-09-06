@@ -118,7 +118,7 @@ export function Select({
       <div className="relative">
         <select
           id={id}
-          className={`${CONTROL} h-11 appearance-none pr-10 cursor-pointer ${className}`}
+          className={`${CONTROL} h-11 appearance-none pr-10 ${className}`}
           {...props}
         >
           {children}
@@ -159,7 +159,7 @@ export function Toggle({
   return (
     <div className="flex items-start justify-between gap-4 py-1">
       <div className="min-w-0">
-        <label htmlFor={id} className="block text-[14px] font-medium text-ink cursor-pointer">
+        <label htmlFor={id} className="block text-[14px] font-medium text-ink">
           {label}
         </label>
         {description && <p className="mt-0.5 text-[12.5px] text-ink-muted">{description}</p>}
