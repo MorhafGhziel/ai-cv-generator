@@ -45,6 +45,63 @@ interface BoxState extends EditableBox {
   isNew?: boolean;
 }
 
+/**
+ * Rebuilds editor state from a saved operation list.
+ *
+ * Operations are the stored form because they replay cleanly onto the
+ * untouched original; this is the inverse, so reopening shows the document as
+ * the user left it rather than as it was uploaded.
+ */
+function restore(original: EditableBox[], operations: PdfOperation[]): BoxState[] {
+  const byId = new Map<string, BoxState>(original.map((b) => [b.id, { ...b }]));
+  const added: BoxState[] = [];
+
+  for (const op of operations) {
+    switch (op.op) {
+      case "delete": {
+        const box = byId.get(op.id);
+        if (box) box.deleted = true;
+        break;
+      }
+      case "edit": {
+        const box = byId.get(op.id);
+        if (box) box.newText = op.text;
+        break;
+      }
+      case "move": {
+        const box = byId.get(op.id);
+        if (box) {
+          box.movedTo = { page: op.page, x: op.x, y: op.y };
+          if (op.text !== undefined) box.newText = op.text;
+        }
+        break;
+      }
+      case "add":
+        added.push({
+          id: `new-restored-${added.length}`,
+          page: op.page,
+          text: op.text,
+          newText: op.text,
+          x: op.x,
+          y: op.y,
+          width: Math.max(40, op.text.length * op.size * 0.5),
+          height: op.size,
+          size: op.size,
+          bold: op.bold,
+          italic: op.italic,
+          serif: op.serif,
+          isNew: true,
+        });
+        break;
+      case "addPage":
+        // Counted by the caller; pages are not boxes.
+        break;
+    }
+  }
+
+  return [...byId.values(), ...added];
+}
+
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 2;
 
@@ -58,6 +115,10 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [storing, setStoring] = useState(false);
+  /** Operations as last persisted, so "unsaved" means genuinely unsaved. */
+  const [savedOps, setSavedOps] = useState<string>("[]");
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   const dragRef = useRef<{ id: string; offsetX: number; offsetY: number; page: number } | null>(null);
 
@@ -66,16 +127,23 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
   useEffect(() => {
     (async () => {
       try {
-        const [meta, file] = await Promise.all([
+        const [meta, file, saved] = await Promise.all([
           apiGet<{ pages: PageInfo[]; boxes: EditableBox[] }>("/api/document/boxes"),
           fetch("/api/document", { method: "POST" }).then((r) => {
             if (!r.ok) throw new Error("Couldn't load your PDF.");
             return r.arrayBuffer();
           }),
+          apiGet<{ operations: PdfOperation[]; savedAt: string | null }>("/api/document/edits"),
         ]);
         setPages(meta.pages);
-        setBoxes(meta.boxes.map((b) => ({ ...b })));
         setPdfBytes(new Uint8Array(file));
+
+        // Replay saved work back into box state, so reopening the editor shows
+        // the document as the user left it rather than as it was uploaded.
+        setBoxes(restore(meta.boxes, saved.operations));
+        setExtraPages(saved.operations.filter((o) => o.op === "addPage").length);
+        setSavedOps(JSON.stringify(saved.operations));
+        setSavedAt(saved.savedAt);
       } catch (error) {
         toast.error(errorMessage(error, "Couldn't open your CV for editing."));
       } finally {
@@ -133,6 +201,8 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
   }, [boxes, extraPages]);
 
   const dirty = operations.length > 0;
+  /** Compared against what was persisted, not merely against "has changes". */
+  const unsaved = JSON.stringify(operations) !== savedOps;
 
   /* -------------------------------------------------------------- actions */
 
@@ -213,6 +283,22 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
 
   function onDragEnd() {
     dragRef.current = null;
+  }
+
+  async function store() {
+    setStoring(true);
+    try {
+      const data = await apiSend<{ savedAt: string }>("/api/document/edits", "PUT", { operations });
+      setSavedOps(JSON.stringify(operations));
+      setSavedAt(data.savedAt);
+      toast.success(
+        operations.length === 0 ? "Changes cleared." : "Saved — your work is here when you come back.",
+      );
+    } catch (error) {
+      toast.error(errorMessage(error, "Couldn't save your changes."));
+    } finally {
+      setStoring(false);
+    }
   }
 
   async function save() {
@@ -317,13 +403,25 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
 
         <Button
           size="sm"
+          variant="secondary"
+          onClick={store}
+          loading={storing}
+          loadingText="Saving…"
+          disabled={!unsaved}
+          icon={<CheckIcon className="text-[1.05em]" />}
+        >
+          {unsaved ? "Save" : "Saved"}
+        </Button>
+
+        <Button
+          size="sm"
           onClick={save}
           loading={saving}
           loadingText="Building…"
           disabled={!dirty}
           icon={<DownloadIcon className="text-[1.05em]" />}
         >
-          {dirty ? `Export ${operations.length}` : "Export"}
+          Export PDF
         </Button>
       </div>
 
@@ -406,20 +504,33 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
         </div>
       </div>
 
-      {dirty && (
+      {(dirty || savedAt) && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-b-[20px] border-t border-line bg-sunk/50 px-4 py-3">
           <p className="flex items-center gap-2 text-[13px] text-ink-muted">
-            <span className="h-2 w-2 rounded-full bg-flame" aria-hidden="true" />
-            {operations.length} unsaved change{operations.length === 1 ? "" : "s"}
+            <span
+              className={`h-2 w-2 rounded-full ${unsaved ? "bg-flame" : "bg-mint"}`}
+              aria-hidden="true"
+            />
+            {operations.length} change{operations.length === 1 ? "" : "s"}
+            {unsaved ? " · not saved yet" : savedAt ? " · saved" : ""}
           </p>
           <div className="flex items-center gap-2">
             <Button
               size="sm"
               variant="quiet"
               onClick={() => {
-                setBoxes((c) => c.filter((b) => !b.isNew).map((b) => ({ ...b, deleted: false, movedTo: undefined, newText: undefined })));
+                setBoxes((c) =>
+                  c.filter((b) => !b.isNew).map((b) => ({ ...b, deleted: false, movedTo: undefined, newText: undefined })),
+                );
                 setExtraPages(0);
                 setSelected(null);
+                // Clear the stored list too, or the work reappears on reopen.
+                apiSend("/api/document/edits", "PUT", { operations: [] })
+                  .then(() => {
+                    setSavedOps("[]");
+                    setSavedAt(null);
+                  })
+                  .catch(() => toast.error("Cleared here, but couldn't clear the saved copy."));
               }}
             >
               Discard all
