@@ -1,6 +1,5 @@
 "use client";
 
-import { motion, useReducedMotion } from "motion/react";
 import { DocIcon, PenIcon } from "@/components/ui/Icons";
 
 /**
@@ -41,8 +40,6 @@ export default function ModeSwitcher({
   mode: WorkMode;
   onChange: (next: WorkMode) => void;
 }) {
-  const reduced = useReducedMotion();
-
   return (
     <div
       className="grid gap-3 sm:grid-cols-2"
@@ -58,20 +55,12 @@ export default function ModeSwitcher({
             role="tab"
             aria-selected={active}
             onClick={() => onChange(item.id)}
-            className={`relative flex items-start gap-3.5 rounded-[20px] border p-5 text-left transition-[border-color,background-color,transform] duration-250 ease-[var(--ease-out-soft)] ${
+            className={`flex items-start gap-3.5 rounded-[20px] border p-5 text-left transition-[border-color,background-color,transform] duration-250 ease-[var(--ease-out-soft)] ${
               active
                 ? "border-ink bg-surface"
                 : "border-line bg-surface/50 hover:-translate-y-0.5 hover:border-line-strong hover:bg-surface"
             }`}
           >
-            {active && !reduced && (
-              <motion.span
-                layoutId="mode-marker"
-                className="absolute inset-x-5 -bottom-px h-[2px] rounded-full bg-flame"
-                transition={{ type: "spring", stiffness: 420, damping: 34 }}
-              />
-            )}
-
             <span
               className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] text-[20px] transition-colors duration-250 ${
                 active ? "bg-flame text-white" : "bg-sunk text-ink-muted"
