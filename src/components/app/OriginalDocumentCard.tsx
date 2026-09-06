@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import toast from "react-hot-toast";
-import { Button } from "@/components/ui/Button";
+import { UploadSpot } from "@/components/art/Spots";
+import { Button, ButtonLink } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
 import { CheckIcon, DocIcon, DownloadIcon, PenIcon } from "@/components/ui/Icons";
 import { apiGet, apiSend, errorMessage } from "@/lib/client-api";
@@ -53,10 +54,10 @@ function downloadBase64(base64: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function OriginalDocumentCard() {
+export default function OriginalDocumentCard({ standalone = false }: { standalone?: boolean } = {}) {
   const [info, setInfo] = useState<DocumentInfo | null>(null);
   const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(standalone);
   const [values, setValues] = useState<Record<string, string>>({});
   const [additions, setAdditions] = useState<Record<string, string>>({});
   const [anchor, setAnchor] = useState("");
@@ -83,7 +84,33 @@ export default function OriginalDocumentCard() {
     load();
   }, [load]);
 
-  if (loading || !info?.exists) return null;
+  if (loading) {
+    return standalone ? <div className="skeleton h-[168px] rounded-[20px]" /> : null;
+  }
+
+  if (!info?.exists) {
+    if (!standalone) return null;
+    return (
+      <section className="rounded-[24px] border border-dashed border-line-strong bg-surface/60">
+        <div className="flex flex-col items-center px-6 py-14 text-center">
+          <UploadSpot size={104} />
+          <p className="font-display mt-6 text-[20px] font-medium tracking-[-0.02em] text-ink">
+            No CV stored yet
+          </p>
+          <p className="mt-2 max-w-[44ch] text-[14px] leading-[1.6] text-ink-muted">
+            Upload your CV and it is kept exactly as you made it, so you can change a detail
+            without losing your layout. CVs uploaded before this existed were not saved — upload
+            again to use this.
+          </p>
+          <div className="mt-6">
+            <ButtonLink href="/profile" variant="secondary">
+              Upload your CV
+            </ButtonLink>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const detected = info.detected ?? [];
   const missing = info.missing ?? [];
@@ -154,7 +181,7 @@ export default function OriginalDocumentCard() {
   }
 
   return (
-    <section className="mb-5 rounded-[20px] border border-line bg-surface p-5 shadow-[var(--shadow-card)] sm:p-6">
+    <section className={`rounded-[20px] border border-line bg-surface p-5 shadow-[var(--shadow-card)] sm:p-6 ${standalone ? "" : "mb-5"}`}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-flame-soft text-[18px] text-flame-ink">
@@ -184,14 +211,16 @@ export default function OriginalDocumentCard() {
           >
             Original
           </Button>
-          <Button
-            size="sm"
-            variant={open ? "quiet" : "secondary"}
-            onClick={() => setOpen((o) => !o)}
-            icon={!open ? <PenIcon className="text-[1.05em]" /> : undefined}
-          >
-            {open ? "Close" : "Edit in place"}
-          </Button>
+          {!standalone && (
+            <Button
+              size="sm"
+              variant={open ? "quiet" : "secondary"}
+              onClick={() => setOpen((o) => !o)}
+              icon={!open ? <PenIcon className="text-[1.05em]" /> : undefined}
+            >
+              {open ? "Close" : "Edit in place"}
+            </Button>
+          )}
         </div>
       </div>
 

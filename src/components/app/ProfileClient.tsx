@@ -6,7 +6,6 @@ import { AnimatePresence, motion } from "motion/react";
 import toast from "react-hot-toast";
 import AppHeader from "@/components/app/AppHeader";
 import PdfDropzone from "@/components/app/PdfDropzone";
-import OriginalDocumentCard from "@/components/app/OriginalDocumentCard";
 import ProfileFormFields from "@/components/app/ProfileFormFields";
 import { Button } from "@/components/ui/Button";
 import { UploadIcon } from "@/components/ui/Icons";
@@ -83,8 +82,6 @@ export default function ProfileClient({ initialProfile }: { initialProfile: CVDa
             missing here can never appear in an application.
           </p>
         </div>
-
-        <OriginalDocumentCard />
 
         {/* -------------------------------------------- Replace from PDF */}
         <section className="mb-5 rounded-[20px] border border-line bg-surface p-5 shadow-[var(--shadow-card)] sm:p-6">

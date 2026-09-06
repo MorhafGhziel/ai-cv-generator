@@ -7,6 +7,8 @@ import { useReactToPrint } from "react-to-print";
 import AppHeader from "@/components/app/AppHeader";
 import ApplicationCard from "@/components/app/ApplicationCard";
 import Composer from "@/components/app/Composer";
+import ModeSwitcher, { type WorkMode } from "@/components/app/ModeSwitcher";
+import OriginalDocumentCard from "@/components/app/OriginalDocumentCard";
 import type { ApplicationEntry, UsageRow } from "@/components/app/types";
 import CVPreview from "@/components/CVPreview";
 import { EmptyDocsSpot } from "@/components/art/Spots";
@@ -49,6 +51,7 @@ export default function DashboardClient({ cvProfile }: { cvProfile: CVData }) {
   const [generating, setGenerating] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageRow[]>([]);
+  const [mode, setMode] = useState<WorkMode>("tailor");
 
   // The printable document is rendered off-screen only while a download is in
   // flight, so the DOM never carries a hidden copy of every CV.
@@ -162,23 +165,38 @@ export default function DashboardClient({ cvProfile }: { cvProfile: CVData }) {
           </h1>
         </div>
 
-        <Composer
-          value={jobDescription}
-          onChange={setJobDescription}
-          onGenerate={handleGenerate}
-          loading={generating}
-          disabled={outOfQuota}
-          disabledReason={
-            outOfQuota ? "You've used today's free generations. They reset on a rolling 24 hours." : undefined
-          }
-        />
+        <ModeSwitcher mode={mode} onChange={setMode} />
 
-        {generateQuota && generateQuota.remaining <= 8 && !outOfQuota && (
-          <p className="mt-3 px-1 text-[12.5px] text-ink-faint">
-            {generateQuota.remaining} of {generateQuota.limit} free generations left today.
-          </p>
-        )}
+        <div className="mt-6">
+          {mode === "edit" ? (
+            <OriginalDocumentCard standalone />
+          ) : (
+            <>
+              <Composer
+                value={jobDescription}
+                onChange={setJobDescription}
+                onGenerate={handleGenerate}
+                loading={generating}
+                disabled={outOfQuota}
+                disabledReason={
+                  outOfQuota
+                    ? "You've used today's free generations. They reset on a rolling 24 hours."
+                    : undefined
+                }
+              />
 
+              {generateQuota && generateQuota.remaining <= 8 && !outOfQuota && (
+                <p className="mt-3 px-1 text-[12.5px] text-ink-faint">
+                  {generateQuota.remaining} of {generateQuota.limit} free generations left today.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* The applications list belongs to tailoring; in edit mode it is noise. */}
+        {mode === "tailor" && (
+        <>
         {/* ============================================ Applications */}
         <section className="mt-12">
           <div className="mb-5 flex items-baseline justify-between gap-4">
@@ -252,6 +270,8 @@ export default function DashboardClient({ cvProfile }: { cvProfile: CVData }) {
               Edit your CV
             </ButtonLink>
           </div>
+        )}
+        </>
         )}
       </main>
 
