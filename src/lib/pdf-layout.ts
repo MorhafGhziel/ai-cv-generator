@@ -55,6 +55,8 @@ export interface PdfLayout {
 const BASELINE_TOLERANCE = 2.5;
 /** A gap wider than this fraction of the font size implies a space between runs. */
 const SPACE_RATIO = 0.22;
+/** A gap wider than this multiple of the font size is a column break, not a space. */
+const COLUMN_GAP_RATIO = 1.6;
 
 export async function extractLayout(bytes: Uint8Array): Promise<PdfLayout> {
   // pdf.js takes ownership of the buffer it is handed and detaches it, leaving
@@ -109,7 +111,16 @@ export async function extractLayout(bytes: Uint8Array): Promise<PdfLayout> {
   return { pageCount: pdf.numPages, pages };
 }
 
-/** Buckets runs by baseline, then orders each bucket left to right. */
+/**
+ * Buckets runs by baseline, then splits each row wherever a wide horizontal gap
+ * shows that it is really two blocks rather than one line.
+ *
+ * CV rows are frequently two-column — an employer left-aligned with dates
+ * right-aligned, a university with its city. Treating that as a single line is
+ * wrong twice over: editing it collapses two independently positioned blocks
+ * into one left-aligned string, and any attempt to remove it has to span half
+ * the page, which is exactly the case the removal guard refuses.
+ */
 function groupIntoLines(runs: TextRun[]): TextLine[] {
   const buckets: TextRun[][] = [];
 
@@ -121,8 +132,31 @@ function groupIntoLines(runs: TextRun[]): TextLine[] {
     else buckets.push([run]);
   }
 
-  return buckets.map((bucket) => {
+  const segments: TextRun[][] = [];
+  for (const bucket of buckets) {
     const ordered = [...bucket].sort((a, b) => a.x - b.x);
+    let current: TextRun[] = [ordered[0]];
+
+    for (let i = 1; i < ordered.length; i++) {
+      const previous = ordered[i - 1];
+      const run = ordered[i];
+      const gap = run.x - (previous.x + previous.width);
+      // A word space is well under half the font size; a column break is
+      // several times it.
+      const columnBreak = Math.max(run.size * COLUMN_GAP_RATIO, 10);
+
+      if (gap > columnBreak) {
+        segments.push(current);
+        current = [run];
+      } else {
+        current.push(run);
+      }
+    }
+    segments.push(current);
+  }
+
+  return segments.map((segment) => {
+    const ordered = segment;
     const last = ordered[ordered.length - 1];
 
     // Reinsert the spaces the producer left implicit in the positions.
