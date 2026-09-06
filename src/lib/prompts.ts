@@ -22,24 +22,38 @@ export interface PriorApplication {
 }
 
 /**
- * Condenses prior applications to the facts that must stay consistent:
- * where the candidate applied, and the job titles and dates they claimed.
- * Bullet prose is deliberately dropped — rewording it per role is the point.
+ * Condenses prior applications down to the only thing that must stay
+ * consistent: the employment facts the candidate has already claimed.
+ *
+ * Crucially this no longer names the companies previously applied *to*. It used
+ * to read "Applied to: neoleap — Frontend Engineer", and whenever the current
+ * input was thin the model simply reused that target — producing a fresh CV
+ * aimed at the previous employer. Prior targets are none of this generation's
+ * business; only the candidate's own history is.
+ *
+ * Bullet prose is dropped deliberately — rewording it per role is the point.
  */
 function digestHistory(history: PriorApplication[]): string {
   const recent = history.slice(0, HISTORY_LIMIT);
-  if (recent.length === 0) return "None.";
+  if (recent.length === 0) return "No previous applications.";
 
-  return recent
-    .map((entry, i) => {
-      const roles = entry.cv.experience
-        .slice(0, 6)
-        .map((job) => `${job.title} at ${job.company} (${job.period})`)
-        .join("; ");
-      const target = [entry.company, entry.role].filter(Boolean).join(" — ") || "Unnamed application";
-      return `${i + 1}. Applied to: ${target}\n   Claimed history: ${roles || "n/a"}`;
-    })
-    .join("\n");
+  const claims = new Set<string>();
+  for (const entry of recent) {
+    for (const job of entry.cv.experience.slice(0, 8)) {
+      const claim = [job.title, job.company && `at ${job.company}`, job.period && `(${job.period})`]
+        .filter(Boolean)
+        .join(" ");
+      if (claim.trim()) claims.add(claim.trim());
+    }
+  }
+
+  if (claims.size === 0) return "No previous applications.";
+
+  return [
+    "The candidate has already submitted CVs stating the following. Do not",
+    "contradict any of it — same employers, same titles, same dates:",
+    ...[...claims].map((claim) => `  - ${claim}`),
+  ].join("\n");
 }
 
 export function buildTailorPrompt(
@@ -72,12 +86,17 @@ SECTION STRATEGY
 - LENGTH: include everything relevant. Two pages is fine. Do not cut real content to fit one page.
 
 CONSISTENCY WITH PRIOR APPLICATIONS
-The candidate may have applied elsewhere already. Facts below must not be contradicted — same employers, same titles, same dates. You may emphasise differently for this role, but a recruiter seeing two of these CVs must see one consistent person.
-
 ${digestHistory(history)}
 
+You may emphasise differently for this role, but a recruiter seeing two of these
+CVs must see one consistent person.
+
 JOB DESCRIPTION
+Everything between the markers is the posting to target. Take targetCompany and
+targetRole from it and from nowhere else — never from a previous application.
+--- BEGIN POSTING ---
 ${jobDescription}
+--- END POSTING ---
 
 CANDIDATE CV DATA
 ${JSON.stringify(base, null, 2)}
