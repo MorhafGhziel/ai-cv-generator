@@ -99,7 +99,11 @@ export default function Landing({ signedIn }: { signedIn: boolean }) {
         {/* ================================================================
             Hero
         ================================================================ */}
-        <section className="relative overflow-hidden">
+        {/* Fills the viewport below the 68px sticky header. `svh` rather than
+            `vh` so mobile browser chrome collapsing doesn't crop the CTA, and
+            `min-h` rather than `h` so the stacked mobile layout can still grow
+            past the fold instead of overflowing. */}
+        <section className="relative flex min-h-[calc(100svh-68px)] items-center overflow-hidden">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute -right-40 -top-32 h-[620px] w-[620px] rounded-full opacity-60 blur-3xl"
@@ -109,7 +113,7 @@ export default function Landing({ signedIn }: { signedIn: boolean }) {
             }}
           />
 
-          <div className="relative mx-auto max-w-[1180px] px-5 pb-16 pt-12 sm:px-8 sm:pb-24 sm:pt-20">
+          <div className="relative mx-auto w-full max-w-[1180px] px-5 py-14 sm:px-8 sm:py-16">
             <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_1fr] lg:gap-10">
               <div>
                 <FadeIn>
@@ -165,6 +169,34 @@ export default function Landing({ signedIn }: { signedIn: boolean }) {
               </FadeIn>
             </div>
           </div>
+
+          {/* Now that the hero owns the whole viewport, something has to say the
+              page continues. Only shown where the fold is real — on a stacked
+              mobile layout the content already overflows, which says it itself. */}
+          <motion.a
+            href="#how"
+            aria-label="Scroll to how it works"
+            className="absolute bottom-7 left-1/2 hidden -translate-x-1/2 flex-col items-center gap-2 text-ink-faint transition-colors duration-200 hover:text-ink lg:flex"
+            initial={reduced ? undefined : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 1, duration: 0.6 }}
+          >
+            <span className="eyebrow">Scroll</span>
+            <motion.svg
+              viewBox="0 0 24 24"
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.75}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              animate={reduced ? undefined : { y: [0, 5, 0] }}
+              transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+            >
+              <path d="M12 5v14M6 13l6 6 6-6" />
+            </motion.svg>
+          </motion.a>
         </section>
 
         {/* ================================================================
