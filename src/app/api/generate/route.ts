@@ -3,6 +3,7 @@ import { z } from "zod";
 import { generateJSON } from "@/lib/ai";
 import { consumeQuota, handler, readJson, requireUserId, ApiError } from "@/lib/api";
 import { generatedCVSchema, LIMITS, tailoredCVLenientSchema, toCVData } from "@/lib/cv-data";
+import { checkJobPosting } from "@/lib/job-posting";
 import { prisma } from "@/lib/prisma";
 import { buildTailorPrompt, type PriorApplication } from "@/lib/prompts";
 
@@ -29,6 +30,14 @@ export const POST = handler(async (req) => {
 
   if (!user?.onboardingComplete || !user.cvProfile) {
     throw new ApiError(409, "Set up your profile before generating a CV.");
+  }
+
+  // Checked before quota is spent. Without a real posting the model has nothing
+  // to target, so it invents an employer or reuses the previous one — and the
+  // user pays for a CV aimed at a company they never applied to.
+  const posting = checkJobPosting(jobDescription);
+  if (!posting.ok) {
+    throw new ApiError(422, posting.reason ?? "That doesn't look like a job posting.");
   }
 
   await consumeQuota(userId, "generate");
