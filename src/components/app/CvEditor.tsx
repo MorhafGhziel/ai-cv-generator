@@ -2,56 +2,36 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
-import PdfPageCanvas from "@/components/app/PdfPageCanvas";
+import EditorPage, { findSnap, type DragState } from "@/components/app/editor/EditorPage";
+import Inspector from "@/components/app/editor/Inspector";
+import { useHistory } from "@/components/app/editor/useHistory";
+import type { BoxState, DocState, PageInfo } from "@/components/app/editor/types";
 import { Button } from "@/components/ui/Button";
-import {
-  ArrowLeftIcon,
-  CheckIcon,
-  DownloadIcon,
-  PlusIcon,
-  TrashIcon,
-} from "@/components/ui/Icons";
+import { ArrowLeftIcon, CheckIcon, DownloadIcon, PlusIcon } from "@/components/ui/Icons";
 import { apiGet, apiSend, errorMessage } from "@/lib/client-api";
 import type { EditableBox, PdfOperation } from "@/lib/pdf-ops";
 
 /**
  * A canvas editor over the user's own PDF.
  *
- * The rendered page is the background, so every design decision the author made
- * survives untouched. Each line of text becomes a box on top that can be
- * retyped, dragged anywhere, or deleted; new text and new pages can be added.
+ * The rendered page is the background, so the design is not approximated — it
+ * is the original document, with only the text layer interactive on top.
  *
- * Nothing is applied until export. The editor holds a list of operations and
- * the server replays them onto a fresh copy of the stored original, so undo is
- * just dropping an operation and the document can never drift.
+ * Nothing is applied as you work. State is a list of operations replayed onto a
+ * fresh copy of the stored original at export, which makes undo total and means
+ * repeated exports cannot drift.
  *
  * Coordinates: PDF space has its origin bottom-left with y increasing upward;
- * the DOM has it top-left going down. The conversion lives here, next to the
- * scale it depends on.
+ * the DOM has it top-left going down. Every conversion lives in this file and
+ * its children, next to the zoom it depends on.
  */
 
-interface PageInfo {
-  pageNumber: number;
-  width: number;
-  height: number;
-}
+const MIN_SCALE = 0.4;
+const MAX_SCALE = 2;
+const NUDGE = 1;
+const NUDGE_FAR = 10;
 
-interface BoxState extends EditableBox {
-  /** Local edits, applied over the original values. */
-  deleted?: boolean;
-  movedTo?: { page: number; x: number; y: number };
-  newText?: string;
-  /** Boxes the user created, which have no counterpart in the original. */
-  isNew?: boolean;
-}
-
-/**
- * Rebuilds editor state from a saved operation list.
- *
- * Operations are the stored form because they replay cleanly onto the
- * untouched original; this is the inverse, so reopening shows the document as
- * the user left it rather than as it was uploaded.
- */
+/** Rebuilds editor state from a saved operation list. */
 function restore(original: EditableBox[], operations: PdfOperation[]): BoxState[] {
   const byId = new Map<string, BoxState>(original.map((b) => [b.id, { ...b }]));
   const added: BoxState[] = [];
@@ -73,12 +53,13 @@ function restore(original: EditableBox[], operations: PdfOperation[]): BoxState[
         if (box) {
           box.movedTo = { page: op.page, x: op.x, y: op.y };
           if (op.text !== undefined) box.newText = op.text;
+          if (op.size !== undefined) box.size = op.size;
         }
         break;
       }
       case "add":
         added.push({
-          id: `new-restored-${added.length}`,
+          id: `new-${added.length}-${Math.random().toString(36).slice(2, 7)}`,
           page: op.page,
           text: op.text,
           newText: op.text,
@@ -94,7 +75,6 @@ function restore(original: EditableBox[], operations: PdfOperation[]): BoxState[
         });
         break;
       case "addPage":
-        // Counted by the caller; pages are not boxes.
         break;
     }
   }
@@ -102,46 +82,34 @@ function restore(original: EditableBox[], operations: PdfOperation[]): BoxState[
   return [...byId.values(), ...added];
 }
 
-/** True once a box differs from what the PDF originally drew. */
-function isChanged(box: BoxState): boolean {
-  return Boolean(
-    box.deleted || box.movedTo || (box.newText !== undefined && box.newText !== box.text),
-  );
-}
-
-const MIN_SCALE = 0.5;
-const MAX_SCALE = 2;
-
 export default function CvEditor({ onExit }: { onExit: () => void }) {
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [pages, setPages] = useState<PageInfo[]>([]);
-  const [boxes, setBoxes] = useState<BoxState[]>([]);
-  const [extraPages, setExtraPages] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [scale, setScale] = useState(1);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [scale, setScale] = useState(0.9);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
+  const [drag, setDrag] = useState<DragState | null>(null);
   const [saving, setSaving] = useState(false);
   const [storing, setStoring] = useState(false);
-  /**
-   * Force an edit through by painting over text that cannot be deleted.
-   * Off by default: covered text stays machine-readable, so an applicant
-   * tracking system would parse both the old value and the new one.
-   */
-  const [allowCover, setAllowCover] = useState(false);
-  /** Kept on screen after an export: a toast is gone before it can be read. */
+  const [savedOps, setSavedOps] = useState("[]");
   const [report, setReport] = useState<
     { op: string; applied: boolean; reason?: string; warning?: string }[] | null
   >(null);
-  /** Saved operations whose target line no longer exists in the document. */
   const [orphaned, setOrphaned] = useState(0);
-  /** Operations as last persisted, so "unsaved" means genuinely unsaved. */
-  const [savedOps, setSavedOps] = useState<string>("[]");
-  const [savedAt, setSavedAt] = useState<string | null>(null);
+  /** Set only after an export was refused, so the retry is offered in context. */
+  const [canForce, setCanForce] = useState(false);
 
-  const dragRef = useRef<{ id: string; offsetX: number; offsetY: number; page: number } | null>(null);
+  const { state, commit, amend, undo, redo, reset, canUndo, canRedo } = useHistory<DocState>({
+    boxes: [],
+    extraPages: 0,
+  });
+  const { boxes, extraPages } = state;
 
-  /* ------------------------------------------------------------- loading */
+  const dragRef = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
+
+  /* --------------------------------------------------------------- loading */
 
   useEffect(() => {
     (async () => {
@@ -152,30 +120,28 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
             if (!r.ok) throw new Error("Couldn't load your PDF.");
             return r.arrayBuffer();
           }),
-          apiGet<{ operations: PdfOperation[]; savedAt: string | null }>("/api/document/edits"),
+          apiGet<{ operations: PdfOperation[] }>("/api/document/edits"),
         ]);
+
+        const known = new Set(meta.boxes.map((b) => b.id));
+        setOrphaned(saved.operations.filter((o) => "id" in o && !known.has(o.id)).length);
+
         setPages(meta.pages);
         setPdfBytes(new Uint8Array(file));
-
-        // Replay saved work back into box state, so reopening the editor shows
-        // the document as the user left it rather than as it was uploaded.
-        const known = new Set(meta.boxes.map((b) => b.id));
-        setOrphaned(
-          saved.operations.filter((o) => "id" in o && !known.has(o.id)).length,
-        );
-        setBoxes(restore(meta.boxes, saved.operations));
-        setExtraPages(saved.operations.filter((o) => o.op === "addPage").length);
+        reset({
+          boxes: restore(meta.boxes, saved.operations),
+          extraPages: saved.operations.filter((o) => o.op === "addPage").length,
+        });
         setSavedOps(JSON.stringify(saved.operations));
-        setSavedAt(saved.savedAt);
       } catch (error) {
         toast.error(errorMessage(error, "Couldn't open your CV for editing."));
       } finally {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [reset]);
 
-  /* ---------------------------------------------------------- operations */
+  /* ------------------------------------------------------------ operations */
 
   const operations = useMemo<PdfOperation[]>(() => {
     const ops: PdfOperation[] = [];
@@ -183,28 +149,26 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
 
     for (const box of boxes) {
       if (box.isNew) {
-        if (!box.deleted && (box.newText ?? box.text).trim()) {
-          const at = box.movedTo ?? { page: box.page, x: box.x, y: box.y };
-          ops.push({
-            op: "add",
-            page: at.page,
-            x: at.x,
-            y: at.y,
-            text: box.newText ?? box.text,
-            size: box.size,
-            bold: box.bold,
-            italic: box.italic,
-            serif: box.serif,
-          });
-        }
+        const text = (box.newText ?? box.text).trim();
+        if (box.deleted || !text) continue;
+        const at = box.movedTo ?? { page: box.page, x: box.x, y: box.y };
+        ops.push({
+          op: "add",
+          page: at.page,
+          x: at.x,
+          y: at.y,
+          text,
+          size: box.size,
+          bold: box.bold,
+          italic: box.italic,
+          serif: box.serif,
+        });
         continue;
       }
 
       if (box.deleted) {
         ops.push({ op: "delete", id: box.id });
-        continue;
-      }
-      if (box.movedTo) {
+      } else if (box.movedTo) {
         ops.push({
           op: "move",
           id: box.id,
@@ -214,9 +178,7 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
           text: box.newText,
           size: box.size,
         });
-        continue;
-      }
-      if (box.newText !== undefined && box.newText !== box.text) {
+      } else if (box.newText !== undefined && box.newText !== box.text) {
         ops.push({ op: "edit", id: box.id, text: box.newText });
       }
     }
@@ -224,99 +186,175 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
   }, [boxes, extraPages]);
 
   const dirty = operations.length > 0;
-  /** Compared against what was persisted, not merely against "has changes". */
   const unsaved = JSON.stringify(operations) !== savedOps;
-
-  /* -------------------------------------------------------------- actions */
-
-  const update = useCallback((id: string, patch: Partial<BoxState>) => {
-    setBoxes((current) => current.map((b) => (b.id === id ? { ...b, ...patch } : b)));
-  }, []);
+  const selected = boxes.find((b) => b.id === selectedId) ?? null;
 
   const allPages = useMemo<PageInfo[]>(() => {
     if (pages.length === 0) return [];
     const last = pages[pages.length - 1];
-    const extras = Array.from({ length: extraPages }, (_, i) => ({
-      pageNumber: last.pageNumber + i + 1,
-      width: last.width,
-      height: last.height,
-    }));
-    return [...pages, ...extras];
+    return [
+      ...pages,
+      ...Array.from({ length: extraPages }, (_, i) => ({
+        pageNumber: last.pageNumber + i + 1,
+        width: last.width,
+        height: last.height,
+      })),
+    ];
   }, [pages, extraPages]);
 
-  function placeNewBox(page: PageInfo, event: React.MouseEvent<HTMLDivElement>) {
-    if (!placing) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / scale;
-    // DOM y grows downward; PDF y grows upward from the bottom.
-    const y = page.height - (event.clientY - rect.top) / scale;
+  /* ----------------------------------------------------------------- edits */
 
-    const id = `new-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setBoxes((current) => [
-      ...current,
-      {
-        id,
-        page: page.pageNumber,
-        text: "New text",
-        newText: "New text",
-        x,
-        y,
-        width: 120,
-        height: 11,
-        size: 11,
-        bold: false,
-        italic: false,
-        serif: true,
-        isNew: true,
-      },
-    ]);
-    setSelected(id);
-    setPlacing(false);
-  }
+  const patch = useCallback(
+    (id: string, changes: Partial<BoxState>, asStep = true) => {
+      const apply = (current: DocState): DocState => ({
+        ...current,
+        boxes: current.boxes.map((b) => (b.id === id ? { ...b, ...changes } : b)),
+      });
+      if (asStep) commit(apply);
+      else amend(apply);
+    },
+    [commit, amend],
+  );
+
+  const removeSelected = useCallback(() => {
+    if (!selected) return;
+    if (selected.isNew) {
+      commit((c) => ({ ...c, boxes: c.boxes.filter((b) => b.id !== selected.id) }));
+      setSelectedId(null);
+    } else {
+      patch(selected.id, { deleted: true });
+    }
+  }, [selected, commit, patch]);
+
+  /* -------------------------------------------------------------- keyboard */
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const typing =
+        !!target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (editingId) setEditingId(null);
+        else if (placing) setPlacing(false);
+        else setSelectedId(null);
+        return;
+      }
+
+      // Everything below is a canvas gesture, not text entry.
+      if (typing || !selected) return;
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        setEditingId(selected.id);
+        return;
+      }
+
+      if (event.key === "Delete" || event.key === "Backspace") {
+        event.preventDefault();
+        removeSelected();
+        return;
+      }
+
+      const step = event.shiftKey ? NUDGE_FAR : NUDGE;
+      const delta =
+        event.key === "ArrowLeft"
+          ? { x: -step, y: 0 }
+          : event.key === "ArrowRight"
+            ? { x: step, y: 0 }
+            : event.key === "ArrowUp"
+              ? { x: 0, y: step }
+              : event.key === "ArrowDown"
+                ? { x: 0, y: -step }
+                : null;
+
+      if (delta) {
+        event.preventDefault();
+        const at = selected.movedTo ?? { page: selected.page, x: selected.x, y: selected.y };
+        patch(selected.id, { movedTo: { page: at.page, x: at.x + delta.x, y: at.y + delta.y } });
+      }
+    }
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, editingId, placing, undo, redo, patch, removeSelected]);
+
+  /* -------------------------------------------------------------- dragging */
 
   function onDragStart(box: BoxState, page: PageInfo, event: React.PointerEvent) {
     if (placing) return;
     event.stopPropagation();
-    (event.target as HTMLElement).setPointerCapture(event.pointerId);
-    const rect = (event.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-    const at = box.movedTo ?? { page: box.page, x: box.x, y: box.y };
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    const surface = event.currentTarget.parentElement as HTMLElement;
+    const rect = surface.getBoundingClientRect();
+    const at = box.movedTo ?? { x: box.x, y: box.y };
+
     dragRef.current = {
       id: box.id,
-      page: page.pageNumber,
       offsetX: (event.clientX - rect.left) / scale - at.x,
       offsetY: (event.clientY - rect.top) / scale - (page.height - at.y),
     };
-    setSelected(box.id);
+    setSelectedId(box.id);
+    setEditingId(null);
+    // One undo step for the whole gesture; the moves that follow amend it.
+    commit((c) => ({ ...c }));
+    setDrag({ id: box.id, guides: {} });
   }
 
   function onDragMove(page: PageInfo, event: React.PointerEvent) {
-    const drag = dragRef.current;
-    if (!drag) return;
+    const current = dragRef.current;
+    if (!current) return;
+
     const rect = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / scale - drag.offsetX;
-    const yFromTop = (event.clientY - rect.top) / scale - drag.offsetY;
-    update(drag.id, {
-      movedTo: {
-        page: page.pageNumber,
-        x: Math.max(0, Math.min(page.width, x)),
-        y: Math.max(0, Math.min(page.height, page.height - yFromTop)),
+    let x = (event.clientX - rect.left) / scale - current.offsetX;
+    let y = page.height - ((event.clientY - rect.top) / scale - current.offsetY);
+
+    // Snap to the left edges and baselines of other blocks on this page, so a
+    // line dropped into an existing column actually lines up with it.
+    const others = boxes.filter(
+      (b) => b.id !== current.id && (b.movedTo?.page ?? b.page) === page.pageNumber && !b.deleted,
+    );
+    const snapX = findSnap(x, others.map((b) => (b.movedTo ?? b).x));
+    const snapY = findSnap(y, others.map((b) => (b.movedTo ?? b).y));
+    if (snapX) x = snapX.value;
+    if (snapY) y = snapY.value;
+
+    setDrag({ id: current.id, guides: { x: snapX?.guide, y: snapY?.guide } });
+
+    patch(
+      current.id,
+      {
+        movedTo: {
+          page: page.pageNumber,
+          x: Math.max(0, Math.min(page.width, x)),
+          y: Math.max(0, Math.min(page.height, y)),
+        },
       },
-    });
+      false,
+    );
   }
 
   function onDragEnd() {
     dragRef.current = null;
+    setDrag(null);
   }
+
+  /* ----------------------------------------------------------- persistence */
 
   async function store() {
     setStoring(true);
     try {
-      const data = await apiSend<{ savedAt: string }>("/api/document/edits", "PUT", { operations });
+      await apiSend("/api/document/edits", "PUT", { operations });
       setSavedOps(JSON.stringify(operations));
-      setSavedAt(data.savedAt);
-      toast.success(
-        operations.length === 0 ? "Changes cleared." : "Saved — your work is here when you come back.",
-      );
+      toast.success(operations.length === 0 ? "Changes cleared." : "Saved.");
     } catch (error) {
       toast.error(errorMessage(error, "Couldn't save your changes."));
     } finally {
@@ -324,11 +362,7 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
     }
   }
 
-  async function save() {
-    if (!dirty) {
-      toast.error("Nothing has changed yet.");
-      return;
-    }
+  async function exportPdf(allowCover = false) {
     setSaving(true);
     try {
       const data = await apiSend<{
@@ -337,7 +371,7 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
         outcomes: { op: string; applied: boolean; reason?: string; warning?: string }[];
         pdf: string;
         filename: string;
-      }>("/api/document/compose", "POST", { operations });
+      }>("/api/document/compose", "POST", { operations, allowCover });
 
       const bytes = Uint8Array.from(atob(data.pdf), (c) => c.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
@@ -347,20 +381,16 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
       link.click();
       URL.revokeObjectURL(url);
 
-      setReport(data.outcomes.filter((o) => !o.applied || o.warning));
+      const notable = data.outcomes.filter((o) => !o.applied || o.warning);
+      setReport(notable.length > 0 ? notable : null);
 
       const refused = data.outcomes.filter((o) => !o.applied);
-      const covered = data.outcomes.filter((o) => o.applied && o.warning);
+      setCanForce(refused.length > 0 && !allowCover);
 
       if (refused.length > 0) {
-        toast.error(`${data.applied} of ${data.total} changes applied. ${refused[0].reason ?? ""}`, {
-          duration: 10000,
-        });
-      } else if (covered.length > 0) {
-        toast.success(
-          `Downloaded. ${covered.length} change${covered.length === 1 ? " was" : "s were"} painted over rather than deleted — the old text is hidden but still readable to software that parses the PDF.`,
-          { duration: 9000 },
-        );
+        toast.error(`${data.applied} of ${data.total} changes applied.`, { duration: 7000 });
+      } else if (data.outcomes.some((o) => o.warning)) {
+        toast.success("Downloaded — some text was painted over rather than deleted.");
       } else {
         toast.success("Downloaded — your design is untouched.");
       }
@@ -371,20 +401,24 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
     }
   }
 
-  /* ----------------------------------------------------------------- view */
+  /* ------------------------------------------------------------------ view */
 
-  if (loading) {
-    return <div className="skeleton h-[520px] rounded-[20px]" />;
-  }
-
-  const selectedBox = boxes.find((b) => b.id === selected) ?? null;
+  if (loading) return <div className="skeleton h-[560px] rounded-[20px]" />;
 
   return (
-    <div className="rounded-[20px] border border-line bg-surface shadow-[var(--shadow-card)]">
-      {/* Toolbar */}
-      <div className="sticky top-16 z-20 flex flex-wrap items-center gap-2 rounded-t-[20px] border-b border-line bg-surface/95 px-4 py-3 backdrop-blur">
-        <Button size="sm" variant="quiet" onClick={onExit} icon={<ArrowLeftIcon className="text-[1.05em]" />}>
+    <div className="overflow-hidden rounded-[20px] border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-3 py-2.5">
+        <Button size="sm" variant="quiet" onClick={onExit} icon={<ArrowLeftIcon />}>
           Back
+        </Button>
+
+        <span className="mx-1 h-5 w-px bg-line" />
+
+        <Button size="sm" variant="quiet" onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">
+          Undo
+        </Button>
+        <Button size="sm" variant="quiet" onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">
+          Redo
         </Button>
 
         <span className="mx-1 h-5 w-px bg-line" />
@@ -393,275 +427,203 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
           size="sm"
           variant={placing ? "primary" : "ghost"}
           onClick={() => setPlacing((p) => !p)}
-          icon={<PlusIcon className="text-[1.05em]" />}
+          icon={<PlusIcon />}
         >
-          {placing ? "Click the page…" : "Add text"}
+          {placing ? "Click the page" : "Add text"}
         </Button>
-
-        <Button size="sm" variant="ghost" onClick={() => setExtraPages((n) => n + 1)}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => commit((c) => ({ ...c, extraPages: c.extraPages + 1 }))}
+        >
           Add page
         </Button>
 
-        {selectedBox && (
+        <span className="ml-auto flex items-center gap-1">
           <Button
             size="sm"
-            variant="danger"
-            onClick={() => {
-              if (selectedBox.isNew) {
-                setBoxes((c) => c.filter((b) => b.id !== selectedBox.id));
-              } else {
-                update(selectedBox.id, { deleted: !selectedBox.deleted });
-              }
-              setSelected(null);
-            }}
-            icon={<TrashIcon className="text-[1.05em]" />}
+            variant="quiet"
+            onClick={() => setScale((s) => Math.max(MIN_SCALE, s - 0.15))}
+            aria-label="Zoom out"
           >
-            {selectedBox.deleted ? "Restore" : "Delete"}
-          </Button>
-        )}
-
-        <span className="ml-auto flex items-center gap-1.5">
-          <Button size="sm" variant="quiet" onClick={() => setScale((s) => Math.max(MIN_SCALE, s - 0.15))}>
             −
           </Button>
-          <span className="w-12 text-center font-mono text-[12px] text-ink-muted">
+          <span className="w-11 text-center font-mono text-[12px] text-ink-muted">
             {Math.round(scale * 100)}%
           </span>
-          <Button size="sm" variant="quiet" onClick={() => setScale((s) => Math.min(MAX_SCALE, s + 0.15))}>
+          <Button
+            size="sm"
+            variant="quiet"
+            onClick={() => setScale((s) => Math.min(MAX_SCALE, s + 0.15))}
+            aria-label="Zoom in"
+          >
             +
           </Button>
         </span>
-
-        <label
-          className="flex cursor-pointer items-center gap-2 rounded-[9px] px-2 py-1.5 text-[12px] text-ink-muted transition-colors hover:bg-sunk"
-          title="Some PDFs store text in a way it cannot be deleted. Painting over it changes how the CV looks, but the old words remain readable to software that parses the file."
-        >
-          <input
-            type="checkbox"
-            checked={allowCover}
-            onChange={(e) => setAllowCover(e.target.checked)}
-            className="h-3.5 w-3.5 accent-[var(--color-flame)]"
-          />
-          Cover text we can&rsquo;t remove
-        </label>
 
         <Button
           size="sm"
           variant="secondary"
           onClick={store}
           loading={storing}
-          loadingText="Saving…"
           disabled={!unsaved}
-          icon={<CheckIcon className="text-[1.05em]" />}
+          icon={<CheckIcon />}
         >
           {unsaved ? "Save" : "Saved"}
         </Button>
-
         <Button
           size="sm"
-          onClick={save}
+          onClick={() => exportPdf(false)}
           loading={saving}
           loadingText="Building…"
           disabled={!dirty}
-          icon={<DownloadIcon className="text-[1.05em]" />}
+          icon={<DownloadIcon />}
         >
-          Export PDF
+          Export
         </Button>
       </div>
 
-      <p className="border-b border-line bg-sunk/50 px-4 py-2.5 text-[12.5px] leading-relaxed text-ink-muted">
-        Click a line to select it, type to change it, drag it anywhere. Your original is never
-        modified — every export rebuilds from it, so nothing here is permanent until you download.
-      </p>
-
       {orphaned > 0 && (
         <p className="border-b border-line bg-danger-soft px-4 py-2.5 text-[12.5px] leading-relaxed text-danger">
-          {orphaned} saved change{orphaned === 1 ? "" : "s"} could not be matched to a line in this
-          document and {orphaned === 1 ? "has" : "have"} been dropped. Saved work from before the
-          text was regrouped no longer lines up — make the change again and save.
+          {orphaned} saved change{orphaned === 1 ? "" : "s"} no longer matched a line in this
+          document and {orphaned === 1 ? "was" : "were"} dropped. Make the change again and save.
         </p>
       )}
 
-      {report && report.length > 0 && (
-        <ul className="divide-y divide-line border-b border-line">
+      {report && (
+        <div className="border-b border-line">
           {report.map((item, i) => (
-            <li
+            <p
               key={i}
               className={`px-4 py-2.5 text-[12.5px] leading-relaxed ${
-                item.applied ? "bg-sunk/50 text-ink-muted" : "bg-danger-soft text-danger"
+                item.applied ? "bg-sunk/60 text-ink-muted" : "bg-danger-soft text-danger"
               }`}
             >
               <span className="font-medium">
-                {item.applied ? "Applied with a caveat" : "Not applied"} — {item.op}
+                {item.applied ? "Applied with a caveat" : "Not applied"}
               </span>
-              {": "}
+              {" — "}
               {item.reason ?? item.warning}
-            </li>
+            </p>
           ))}
-        </ul>
+          {canForce && (
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-danger-soft px-4 pb-3">
+              <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-danger">
+                This PDF won&rsquo;t let that text be deleted. You can paint over it instead — the
+                CV will look right, but the old words stay readable to software that scans it.
+              </p>
+              <Button size="sm" variant="secondary" onClick={() => exportPdf(true)}>
+                Paint over it and export
+              </Button>
+            </div>
+          )}
+        </div>
       )}
 
-      {/* Pages */}
-      <div className="max-h-[70vh] overflow-auto bg-sunk/60 p-6">
-        <div className="mx-auto flex w-fit flex-col gap-8">
-          {allPages.map((page) => {
-            const isExtra = page.pageNumber > pages.length;
-            return (
-              <div key={page.pageNumber} className="relative">
-                <p className="mb-2 font-mono text-[11px] text-ink-faint">
-                  Page {page.pageNumber}
-                  {isExtra && " · added"}
-                </p>
-
-                <div
-                  className={`relative ${placing ? "cursor-crosshair" : ""}`}
-                  style={{ width: page.width * scale, height: page.height * scale }}
-                  onClick={(e) => placeNewBox(page, e)}
-                  onPointerMove={(e) => onDragMove(page, e)}
-                  onPointerUp={onDragEnd}
-                >
-                  {isExtra ? (
-                    <div className="absolute inset-0 rounded-[4px] border border-dashed border-line-strong bg-white shadow-[var(--shadow-lift)]" />
-                  ) : (
-                    <PdfPageCanvas pdfBytes={pdfBytes} pageNumber={page.pageNumber} scale={scale} />
-                  )}
-
-                  {/* Cover the original glyphs of any line the user changed.
-                      The canvas underneath is the unmodified PDF, so without
-                      this a deselected edit shows the old text — the edit only
-                      appeared while the input was focused. */}
-                  {boxes
-                    .filter((b) => !b.isNew && b.page === page.pageNumber && isChanged(b))
-                    .map((box) => (
-                      <div
-                        key={`cover-${box.id}`}
-                        className="pointer-events-none absolute bg-white"
-                        style={{
-                          left: (box.x - 1) * scale,
-                          top: (page.height - box.y - box.size - 1) * scale,
-                          width: (box.width + 3) * scale,
-                          height: (box.size * 1.3 + 2) * scale,
-                        }}
-                      />
-                    ))}
-
-                  {boxes
-                    .filter((b) => (b.movedTo?.page ?? b.page) === page.pageNumber)
-                    .map((box) => {
-                      const at = box.movedTo ?? { x: box.x, y: box.y };
-                      const active = selected === box.id;
-                      const text = box.newText ?? box.text;
-                      const changed = isChanged(box);
-
-                      return (
-                        <div
-                          key={box.id}
-                          onPointerDown={(e) => onDragStart(box, page, e)}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelected(box.id);
-                          }}
-                          className={`absolute cursor-move rounded-[3px] transition-colors ${
-                            box.deleted
-                              ? "outline outline-1 outline-dashed outline-danger/50"
-                              : active
-                                ? "outline outline-2 outline-flame"
-                                : changed
-                                  ? "outline outline-1 outline-flame/30"
-                                  : "hover:bg-flame/[0.06] hover:outline hover:outline-1 hover:outline-flame/40"
-                          }`}
-                          style={{
-                            left: at.x * scale,
-                            // PDF baselines sit at the bottom of the glyphs.
-                            top: (page.height - at.y - box.size) * scale,
-                            minWidth: Math.max(box.width, 12) * scale,
-                            height: box.size * 1.35 * scale,
-                          }}
-                          title={box.text}
-                        >
-                          {/* Render the new words wherever the line now is, so
-                              the page always shows what the export will. */}
-                          {!box.deleted && (changed || box.isNew) && !active && (
-                            <span
-                              className="pointer-events-none absolute left-0 top-0 whitespace-pre text-ink"
-                              style={{
-                                fontSize: box.size * scale,
-                                lineHeight: `${box.size * 1.25 * scale}px`,
-                                fontFamily: box.serif
-                                  ? "'Times New Roman', Times, serif"
-                                  : "Helvetica, Arial, sans-serif",
-                                fontWeight: box.bold ? 700 : 400,
-                                fontStyle: box.italic ? "italic" : "normal",
-                              }}
-                            >
-                              {text}
-                            </span>
-                          )}
-
-                          {active && !box.deleted && (
-                            <input
-                              autoFocus
-                              value={text}
-                              onChange={(e) => update(box.id, { newText: e.target.value })}
-                              onPointerDown={(e) => e.stopPropagation()}
-                              className="absolute inset-0 w-full rounded-[3px] border-none bg-white px-0.5 text-ink outline-none"
-                              style={{
-                                fontSize: Math.max(9, box.size * scale),
-                                fontFamily: box.serif
-                                  ? "'Times New Roman', Times, serif"
-                                  : "Helvetica, Arial, sans-serif",
-                                fontWeight: box.bold ? 700 : 400,
-                                fontStyle: box.italic ? "italic" : "normal",
-                              }}
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {(dirty || savedAt) && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-b-[20px] border-t border-line bg-sunk/50 px-4 py-3">
-          <p className="flex items-center gap-2 text-[13px] text-ink-muted">
-            <span
-              className={`h-2 w-2 rounded-full ${unsaved ? "bg-flame" : "bg-mint"}`}
-              aria-hidden="true"
-            />
-            {operations.length} change{operations.length === 1 ? "" : "s"}
-            {unsaved ? " · not saved yet" : savedAt ? " · saved" : ""}
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="quiet"
-              onClick={() => {
-                setBoxes((c) =>
-                  c.filter((b) => !b.isNew).map((b) => ({ ...b, deleted: false, movedTo: undefined, newText: undefined })),
-                );
-                setExtraPages(0);
-                setSelected(null);
-                // Clear the stored list too, or the work reappears on reopen.
-                apiSend("/api/document/edits", "PUT", { operations: [] })
-                  .then(() => {
-                    setSavedOps("[]");
-                    setSavedAt(null);
-                  })
-                  .catch(() => toast.error("Cleared here, but couldn't clear the saved copy."));
-              }}
-            >
-              Discard all
-            </Button>
-            <Button size="sm" onClick={save} loading={saving} icon={<CheckIcon className="text-[1.05em]" />}>
-              Export PDF
-            </Button>
+      <div className="flex">
+        <div className="min-w-0 flex-1 overflow-auto bg-sunk/60 p-6" style={{ maxHeight: "72vh" }}>
+          <div className="mx-auto flex w-fit flex-col gap-8">
+            {allPages.map((page) => (
+              <EditorPage
+                key={page.pageNumber}
+                page={page}
+                boxes={boxes}
+                pdfBytes={pdfBytes}
+                scale={scale}
+                selectedId={selectedId}
+                editingId={editingId}
+                placing={placing}
+                drag={drag}
+                isExtra={page.pageNumber > pages.length}
+                onSelect={(id) => {
+                  setSelectedId(id);
+                  if (id !== editingId) setEditingId(null);
+                }}
+                onStartEdit={setEditingId}
+                onChangeText={(id, text) => patch(id, { newText: text }, false)}
+                onPlace={(target, x, y) => {
+                  const id = `new-${Date.now()}`;
+                  commit((c) => ({
+                    ...c,
+                    boxes: [
+                      ...c.boxes,
+                      {
+                        id,
+                        page: target.pageNumber,
+                        text: "New text",
+                        newText: "New text",
+                        x,
+                        y,
+                        width: 110,
+                        height: 11,
+                        size: 11,
+                        bold: false,
+                        italic: false,
+                        serif: true,
+                        isNew: true,
+                      },
+                    ],
+                  }));
+                  setSelectedId(id);
+                  setEditingId(id);
+                  setPlacing(false);
+                }}
+                onDragStart={onDragStart}
+                onDragMove={onDragMove}
+                onDragEnd={onDragEnd}
+              />
+            ))}
           </div>
         </div>
-      )}
+
+        <Inspector
+          box={selected}
+          pageHeight={allPages[0]?.height ?? 792}
+          onChange={(changes) => selected && patch(selected.id, changes)}
+          onDelete={removeSelected}
+          onRestore={() => selected && patch(selected.id, { deleted: false })}
+          onDeselect={() => {
+            setSelectedId(null);
+            setEditingId(null);
+          }}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-sunk/50 px-4 py-3">
+        <p className="flex items-center gap-2 text-[13px] text-ink-muted">
+          <span
+            className={`h-2 w-2 rounded-full ${
+              dirty ? (unsaved ? "bg-flame" : "bg-mint") : "bg-line-strong"
+            }`}
+            aria-hidden="true"
+          />
+          {dirty
+            ? `${operations.length} change${operations.length === 1 ? "" : "s"}${unsaved ? " · not saved" : " · saved"}`
+            : "No changes yet — click any line on the page to start"}
+        </p>
+
+        {dirty && (
+          <Button
+            size="sm"
+            variant="quiet"
+            onClick={() => {
+              commit(() => ({
+                boxes: boxes
+                  .filter((b) => !b.isNew)
+                  .map((b) => ({ ...b, deleted: false, movedTo: undefined, newText: undefined })),
+                extraPages: 0,
+              }));
+              setSelectedId(null);
+              setReport(null);
+              apiSend("/api/document/edits", "PUT", { operations: [] })
+                .then(() => setSavedOps("[]"))
+                .catch(() => toast.error("Cleared here, but the saved copy remains."));
+            }}
+          >
+            Discard all
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
