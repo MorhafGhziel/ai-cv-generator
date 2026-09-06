@@ -31,6 +31,25 @@ model User {
 
   cvEntries   CvEntry[]
   usageEvents UsageEvent[]
+  document    OriginalDocument?
+}
+
+/// The CV exactly as the user uploaded it.
+///
+/// Text extraction discards every design decision a PDF carries — fonts,
+/// columns, colour, spacing — so the original bytes are the only way to hand
+/// someone their own document back, or to change one value inside it without
+/// rebuilding the page. One per user; a new upload replaces it.
+model OriginalDocument {
+  id         String   @id @default(cuid())
+  userId     String   @unique
+  filename   String
+  bytes      Bytes
+  byteSize   Int
+  pageCount  Int
+  uploadedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Account {

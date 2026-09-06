@@ -3,6 +3,7 @@ import { extractText } from "unpdf";
 import { generateJSON } from "@/lib/ai";
 import { ApiError, consumeQuota, handler, requireUserId } from "@/lib/api";
 import { extractedProfileSchema } from "@/lib/cv-data";
+import { prisma } from "@/lib/prisma";
 import { buildExtractPrompt } from "@/lib/prompts";
 
 export const runtime = "nodejs";
@@ -41,9 +42,17 @@ export const POST = handler(async (req) => {
     throw new ApiError(400, "That file is empty.");
   }
 
+  // Keep the bytes before anything reads them: pdf.js detaches the buffer it is
+  // given, and this is the only copy of the user's own design that will ever
+  // exist — text extraction throws away fonts, columns, colour and spacing.
+  const uploaded = new Uint8Array(await file.arrayBuffer());
+
   let text: string;
+  let pageCount = 0;
   try {
-    const { text: pages } = await extractText(new Uint8Array(await file.arrayBuffer()));
+    const result = await extractText(uploaded.slice());
+    const pages = result.text;
+    pageCount = result.totalPages;
     text = (Array.isArray(pages) ? pages.join("\n") : String(pages)).slice(0, MAX_CHARS);
   } catch (error) {
     console.warn("[extract] unpdf failed:", error);
@@ -62,5 +71,25 @@ export const POST = handler(async (req) => {
   await consumeQuota(userId, "extract");
 
   const profile = await generateJSON(buildExtractPrompt(text), extractedProfileSchema);
+
+  // Store the original so the user can always get their own document back, and
+  // so single values can later be edited inside it without losing the design.
+  // A failure here must not cost them the extraction they just paid quota for.
+  try {
+    const record = {
+      filename: file.name.slice(0, 200) || "cv.pdf",
+      bytes: Buffer.from(uploaded),
+      byteSize: uploaded.byteLength,
+      pageCount,
+    };
+    await prisma.originalDocument.upsert({
+      where: { userId },
+      create: { userId, ...record },
+      update: record,
+    });
+  } catch (error) {
+    console.error("[extract] could not store the original PDF:", error);
+  }
+
   return NextResponse.json(profile);
 });
