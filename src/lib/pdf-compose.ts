@@ -39,6 +39,21 @@ export interface ComposeOutcome {
   id?: string;
   applied: boolean;
   reason?: string;
+  /** Set when the edit landed, but with a caveat the user should know about. */
+  warning?: string;
+}
+
+export interface ComposeOptions {
+  /**
+   * When the old text cannot be deleted from the text layer, paint over it and
+   * carry on rather than refusing.
+   *
+   * Off by default, because the covered text stays machine-readable: an
+   * applicant tracking system parses the text layer, not the pixels, and would
+   * read both the old value and the new one. That is a real cost, so it is the
+   * user's call rather than a silent fallback.
+   */
+  allowCover?: boolean;
 }
 
 export interface ComposeResult {
@@ -75,6 +90,7 @@ export function toEditableBoxes(layout: PdfLayout): EditableBox[] {
 export async function composePdf(
   original: Uint8Array,
   operations: PdfOperation[],
+  { allowCover = false }: ComposeOptions = {},
 ): Promise<ComposeResult> {
   const doc = await PDFDocument.load(original.slice());
   const layout = await extractLayout(original);
@@ -110,6 +126,19 @@ export async function composePdf(
    * passes — erase everything, flush, then draw.
    */
   const erased = new Map<number, string>();
+  /** Rectangles to paint where the text layer could not be edited. */
+  const covers: { page: number; line: TextLine }[] = [];
+
+  /**
+   * Erases a line, or falls back to covering it when the user has allowed that.
+   * Returns null when neither is possible.
+   */
+  function eraseOrCover(pageNumber: number, line: TextLine): "erased" | "covered" | null {
+    if (erase(pageNumber, line)) return "erased";
+    if (!allowCover) return null;
+    covers.push({ page: pageNumber, line });
+    return "covered";
+  }
 
   function contentOf(pageNumber: number): string | null {
     const cached = erased.get(pageNumber);
@@ -189,8 +218,14 @@ export async function composePdf(
           outcomes.push({ op: op.op, id: op.id, applied: false, reason: MISSING });
           break;
         }
-        const ok = erase(found.page, found.line);
-        outcomes.push({ op: op.op, id: op.id, applied: ok, reason: ok ? undefined : UNREADABLE });
+        const how = eraseOrCover(found.page, found.line);
+        outcomes.push({
+          op: op.op,
+          id: op.id,
+          applied: how !== null,
+          reason: how === null ? UNREADABLE : undefined,
+          warning: how === "covered" ? COVERED : undefined,
+        });
         break;
       }
 
@@ -200,7 +235,8 @@ export async function composePdf(
           outcomes.push({ op: op.op, id: op.id, applied: false, reason: MISSING });
           break;
         }
-        if (!erase(found.page, found.line)) {
+        const editHow = eraseOrCover(found.page, found.line);
+        if (editHow === null) {
           outcomes.push({ op: op.op, id: op.id, applied: false, reason: UNREADABLE });
           break;
         }
@@ -212,7 +248,12 @@ export async function composePdf(
           size: found.line.size,
           style: styleOf(found.line),
         });
-        outcomes.push({ op: op.op, id: op.id, applied: true });
+        outcomes.push({
+          op: op.op,
+          id: op.id,
+          applied: true,
+          warning: editHow === "covered" ? COVERED : undefined,
+        });
         break;
       }
 
@@ -226,7 +267,8 @@ export async function composePdf(
           outcomes.push({ op: op.op, id: op.id, applied: false, reason: `Page ${op.page} doesn't exist.` });
           break;
         }
-        if (!erase(found.page, found.line)) {
+        const moveHow = eraseOrCover(found.page, found.line);
+        if (moveHow === null) {
           outcomes.push({ op: op.op, id: op.id, applied: false, reason: UNREADABLE });
           break;
         }
@@ -238,7 +280,12 @@ export async function composePdf(
           size: op.size ?? found.line.size,
           style: styleOf(found.line),
         });
-        outcomes.push({ op: op.op, id: op.id, applied: true });
+        outcomes.push({
+          op: op.op,
+          id: op.id,
+          applied: true,
+          warning: moveHow === "covered" ? COVERED : undefined,
+        });
         break;
       }
 
@@ -270,6 +317,20 @@ export async function composePdf(
     );
   }
 
+  // Covers go down before the new text, and after the erased streams are
+  // flushed, so nothing paints over the words it was meant to reveal.
+  for (const { page: pageNumber, line } of covers) {
+    const page = doc.getPage(pageNumber - 1);
+    const descent = line.size * 0.25;
+    page.drawRectangle({
+      x: line.x - 1,
+      y: line.y - descent - 1,
+      width: line.endX - line.x + 3,
+      height: line.size + descent + 2,
+      color: rgb(1, 1, 1),
+    });
+  }
+
   for (const draw of draws) {
     drawLine(doc.getPage(draw.page - 1), draw.text, draw.x, draw.y, draw.size, draw.style, serif, sans);
   }
@@ -285,7 +346,10 @@ function styleOf(line: TextLine): { serif: boolean; bold: boolean; italic: boole
 }
 
 const UNREADABLE =
-  "This PDF stores that text in a way we can't remove — it would stay readable underneath. Left as it was.";
+  "This PDF stores that text in a way we can't remove, so the old words would stay readable underneath. Left as it was — turn on \"Cover text we can't remove\" to change it anyway.";
+
+const COVERED =
+  "Painted over rather than deleted: the old text is hidden but still readable to software that parses the PDF.";
 
 /**
  * Draws text, wrapping only when it would otherwise run off the page. A CV line

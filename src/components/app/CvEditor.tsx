@@ -123,6 +123,12 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
   const [placing, setPlacing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [storing, setStoring] = useState(false);
+  /**
+   * Force an edit through by painting over text that cannot be deleted.
+   * Off by default: covered text stays machine-readable, so an applicant
+   * tracking system would parse both the old value and the new one.
+   */
+  const [allowCover, setAllowCover] = useState(false);
   /** Operations as last persisted, so "unsaved" means genuinely unsaved. */
   const [savedOps, setSavedOps] = useState<string>("[]");
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -318,7 +324,7 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
       const data = await apiSend<{
         applied: number;
         total: number;
-        outcomes: { op: string; applied: boolean; reason?: string }[];
+        outcomes: { op: string; applied: boolean; reason?: string; warning?: string }[];
         pdf: string;
         filename: string;
       }>("/api/document/compose", "POST", { operations });
@@ -332,13 +338,19 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
       URL.revokeObjectURL(url);
 
       const refused = data.outcomes.filter((o) => !o.applied);
-      if (refused.length === 0) {
-        toast.success("Downloaded — your design is untouched.");
-      } else {
-        toast.error(
-          `${data.applied} of ${data.total} changes applied. ${refused[0].reason ?? ""}`,
-          { duration: 8000 },
+      const covered = data.outcomes.filter((o) => o.applied && o.warning);
+
+      if (refused.length > 0) {
+        toast.error(`${data.applied} of ${data.total} changes applied. ${refused[0].reason ?? ""}`, {
+          duration: 10000,
+        });
+      } else if (covered.length > 0) {
+        toast.success(
+          `Downloaded. ${covered.length} change${covered.length === 1 ? " was" : "s were"} painted over rather than deleted — the old text is hidden but still readable to software that parses the PDF.`,
+          { duration: 9000 },
         );
+      } else {
+        toast.success("Downloaded — your design is untouched.");
       }
     } catch (error) {
       toast.error(errorMessage(error, "Couldn't build that PDF."));
@@ -407,6 +419,19 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
             +
           </Button>
         </span>
+
+        <label
+          className="flex cursor-pointer items-center gap-2 rounded-[9px] px-2 py-1.5 text-[12px] text-ink-muted transition-colors hover:bg-sunk"
+          title="Some PDFs store text in a way it cannot be deleted. Painting over it changes how the CV looks, but the old words remain readable to software that parses the file."
+        >
+          <input
+            type="checkbox"
+            checked={allowCover}
+            onChange={(e) => setAllowCover(e.target.checked)}
+            className="h-3.5 w-3.5 accent-[var(--color-flame)]"
+          />
+          Cover text we can&rsquo;t remove
+        </label>
 
         <Button
           size="sm"

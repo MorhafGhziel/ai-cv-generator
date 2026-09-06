@@ -8,7 +8,11 @@ import { operationsSchema } from "@/lib/pdf-ops";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const bodySchema = z.object({ operations: operationsSchema });
+const bodySchema = z.object({
+  operations: operationsSchema,
+  /** Opt in to painting over text that cannot be deleted. See composePdf. */
+  allowCover: z.boolean().default(false),
+});
 
 /**
  * Replays the editor's operations onto a copy of the stored PDF and returns it.
@@ -20,7 +24,7 @@ const bodySchema = z.object({ operations: operationsSchema });
  */
 export const POST = handler(async (req) => {
   const userId = await requireUserId();
-  const { operations } = await readJson(req, bodySchema);
+  const { operations, allowCover } = await readJson(req, bodySchema);
 
   if (operations.length === 0) {
     throw new ApiError(400, "There are no changes to save.");
@@ -35,7 +39,7 @@ export const POST = handler(async (req) => {
 
   let result;
   try {
-    result = await composePdf(new Uint8Array(record.bytes), operations);
+    result = await composePdf(new Uint8Array(record.bytes), operations, { allowCover });
   } catch (error) {
     console.error("[document/compose] failed:", error);
     throw new ApiError(422, "We couldn't build that PDF. Your original is unchanged.");
