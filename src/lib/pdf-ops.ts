@@ -83,6 +83,17 @@ export interface EditableBox {
   serif: boolean;
 }
 
-export function boxId(page: number, index: number): string {
-  return `p${page}-l${index}`;
+/**
+ * Identifies a text block by where it sits, not by its position in a list.
+ *
+ * An index-based id (`p3-l12`) is only stable while the grouping algorithm is.
+ * Splitting two-column rows renumbered every block after the first split, which
+ * silently invalidated saved work: operations pointed at lines that had moved
+ * or no longer existed, and the edits were dropped without explanation.
+ *
+ * Coordinates come from the PDF itself and do not move, so an id minted today
+ * still resolves after the grouping changes again.
+ */
+export function boxId(page: number, x: number, y: number): string {
+  return `p${page}-x${Math.round(x)}y${Math.round(y)}`;
 }

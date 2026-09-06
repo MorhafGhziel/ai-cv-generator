@@ -66,10 +66,10 @@ export function toEditableBoxes(layout: PdfLayout): EditableBox[] {
   const boxes: EditableBox[] = [];
 
   for (const page of layout.pages) {
-    page.lines.forEach((line, index) => {
+    page.lines.forEach((line) => {
       const run = line.runs[0];
       boxes.push({
-        id: boxId(page.pageNumber, index),
+        id: boxId(page.pageNumber, line.x, line.y),
         page: page.pageNumber,
         text: line.text,
         x: line.x,
@@ -109,8 +109,8 @@ export async function composePdf(
   // Index the original lines so an id resolves without rescanning.
   const lines = new Map<string, { line: TextLine; page: number }>();
   for (const page of layout.pages) {
-    page.lines.forEach((line, index) => {
-      lines.set(boxId(page.pageNumber, index), { line, page: page.pageNumber });
+    page.lines.forEach((line) => {
+      lines.set(boxId(page.pageNumber, line.x, line.y), { line, page: page.pageNumber });
     });
   }
 
