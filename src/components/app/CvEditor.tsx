@@ -102,6 +102,13 @@ function restore(original: EditableBox[], operations: PdfOperation[]): BoxState[
   return [...byId.values(), ...added];
 }
 
+/** True once a box differs from what the PDF originally drew. */
+function isChanged(box: BoxState): boolean {
+  return Boolean(
+    box.deleted || box.movedTo || (box.newText !== undefined && box.newText !== box.text),
+  );
+}
+
 const MIN_SCALE = 0.5;
 const MAX_SCALE = 2;
 
@@ -455,11 +462,33 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
                     <PdfPageCanvas pdfBytes={pdfBytes} pageNumber={page.pageNumber} scale={scale} />
                   )}
 
+                  {/* Cover the original glyphs of any line the user changed.
+                      The canvas underneath is the unmodified PDF, so without
+                      this a deselected edit shows the old text — the edit only
+                      appeared while the input was focused. */}
+                  {boxes
+                    .filter((b) => !b.isNew && b.page === page.pageNumber && isChanged(b))
+                    .map((box) => (
+                      <div
+                        key={`cover-${box.id}`}
+                        className="pointer-events-none absolute bg-white"
+                        style={{
+                          left: (box.x - 1) * scale,
+                          top: (page.height - box.y - box.size - 1) * scale,
+                          width: (box.width + 3) * scale,
+                          height: (box.size * 1.3 + 2) * scale,
+                        }}
+                      />
+                    ))}
+
                   {boxes
                     .filter((b) => (b.movedTo?.page ?? b.page) === page.pageNumber)
                     .map((box) => {
                       const at = box.movedTo ?? { x: box.x, y: box.y };
                       const active = selected === box.id;
+                      const text = box.newText ?? box.text;
+                      const changed = isChanged(box);
+
                       return (
                         <div
                           key={box.id}
@@ -470,10 +499,12 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
                           }}
                           className={`absolute cursor-move rounded-[3px] transition-colors ${
                             box.deleted
-                              ? "bg-danger/10 line-through opacity-50 outline outline-1 outline-danger/40"
+                              ? "outline outline-1 outline-dashed outline-danger/50"
                               : active
-                                ? "bg-flame/10 outline outline-2 outline-flame"
-                                : "hover:bg-flame/[0.06] hover:outline hover:outline-1 hover:outline-flame/40"
+                                ? "outline outline-2 outline-flame"
+                                : changed
+                                  ? "outline outline-1 outline-flame/30"
+                                  : "hover:bg-flame/[0.06] hover:outline hover:outline-1 hover:outline-flame/40"
                           }`}
                           style={{
                             left: at.x * scale,
@@ -484,14 +515,40 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
                           }}
                           title={box.text}
                         >
+                          {/* Render the new words wherever the line now is, so
+                              the page always shows what the export will. */}
+                          {!box.deleted && (changed || box.isNew) && !active && (
+                            <span
+                              className="pointer-events-none absolute left-0 top-0 whitespace-pre text-ink"
+                              style={{
+                                fontSize: box.size * scale,
+                                lineHeight: `${box.size * 1.25 * scale}px`,
+                                fontFamily: box.serif
+                                  ? "'Times New Roman', Times, serif"
+                                  : "Helvetica, Arial, sans-serif",
+                                fontWeight: box.bold ? 700 : 400,
+                                fontStyle: box.italic ? "italic" : "normal",
+                              }}
+                            >
+                              {text}
+                            </span>
+                          )}
+
                           {active && !box.deleted && (
                             <input
                               autoFocus
-                              value={box.newText ?? box.text}
+                              value={text}
                               onChange={(e) => update(box.id, { newText: e.target.value })}
                               onPointerDown={(e) => e.stopPropagation()}
                               className="absolute inset-0 w-full rounded-[3px] border-none bg-white px-0.5 text-ink outline-none"
-                              style={{ fontSize: Math.max(9, box.size * scale) }}
+                              style={{
+                                fontSize: Math.max(9, box.size * scale),
+                                fontFamily: box.serif
+                                  ? "'Times New Roman', Times, serif"
+                                  : "Helvetica, Arial, sans-serif",
+                                fontWeight: box.bold ? 700 : 400,
+                                fontStyle: box.italic ? "italic" : "normal",
+                              }}
                             />
                           )}
                         </div>
