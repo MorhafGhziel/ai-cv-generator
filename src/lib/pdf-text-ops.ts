@@ -166,14 +166,44 @@ export function removeTextFromStream(stream: string, target: string): string | n
   const operators = findTextOperators(stream);
 
   // A value can span consecutive operators, so widen the window until covered.
+  //
+  // The window is bounded by *content*, not just operator count. Operators in a
+  // content stream follow drawing order, not reading order, so a wide window
+  // can span unrelated lines — and since the whole span is deleted, that
+  // silently destroys text the caller never asked to touch. Removing
+  // "Email :…ghzielmorhaf@gmail.com" once took "www.morhaf.me/" with it,
+  // because both contain "morhaf" and the window stretched between them.
+  //
+  // Abandoning a start position as soon as the accumulation outgrows the needle
+  // keeps a match tight to the text that actually forms it.
+  const slack = needle.length + 40;
+  const span = (from: number, to: number) =>
+    squash(operators.slice(from, to + 1).map((o) => o.text).join(""));
+
   for (let start = 0; start < operators.length; start++) {
     let accumulated = "";
     for (let end = start; end < operators.length && end - start < 24; end++) {
       accumulated += operators[end].text;
+
+      if (squash(accumulated).length > slack) break;
       if (!squash(accumulated).includes(needle)) continue;
 
-      const first = operators[start];
-      const last = operators[end];
+      // Shrink the window to the fewest operators that still contain the
+      // needle. Without this the span keeps whichever operators happened to
+      // precede or follow the match, and deleting them takes unrelated text.
+      let from = start;
+      let to = end;
+      while (from < to && span(from + 1, to).includes(needle)) from++;
+      while (to > from && span(from, to - 1).includes(needle)) to--;
+
+      // Even minimised, the window can still straddle unrelated content when
+      // the needle's own fragments are not adjacent in drawing order. Deleting
+      // that would quietly destroy text the caller never named, so refuse and
+      // let them decline the edit instead.
+      if (span(from, to).length > needle.length + 12) return null;
+
+      const first = operators[from];
+      const last = operators[to];
       // Replacing with spaces preserves every byte offset around it, so no
       // other operator in the stream shifts position.
       return (
