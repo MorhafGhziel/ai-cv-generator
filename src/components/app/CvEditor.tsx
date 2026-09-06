@@ -31,6 +31,19 @@ const MAX_SCALE = 2;
 const NUDGE = 1;
 const NUDGE_FAR = 10;
 
+/** Collapses repeated failures into one line each — four identical red blocks
+ *  say nothing that one does. */
+function dedupe(
+  outcomes: { reason?: string }[],
+): { reason: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const o of outcomes) {
+    const reason = o.reason ?? "Unknown reason.";
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return [...counts].map(([reason, count]) => ({ reason, count }));
+}
+
 /** Rebuilds editor state from a saved operation list. */
 function restore(original: EditableBox[], operations: PdfOperation[]): BoxState[] {
   const byId = new Map<string, BoxState>(original.map((b) => [b.id, { ...b }]));
@@ -94,12 +107,10 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
   const [saving, setSaving] = useState(false);
   const [storing, setStoring] = useState(false);
   const [savedOps, setSavedOps] = useState("[]");
-  const [report, setReport] = useState<
-    { op: string; applied: boolean; reason?: string; warning?: string }[] | null
-  >(null);
+  /** How many edits were painted over rather than deleted, last export. */
+  const [covered, setCovered] = useState(0);
+  const [report, setReport] = useState<{ reason: string; count: number }[] | null>(null);
   const [orphaned, setOrphaned] = useState(0);
-  /** Set only after an export was refused, so the retry is offered in context. */
-  const [canForce, setCanForce] = useState(false);
 
   const { state, commit, amend, undo, redo, reset, canUndo, canRedo } = useHistory<DocState>({
     boxes: [],
@@ -362,7 +373,7 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
     }
   }
 
-  async function exportPdf(allowCover = false) {
+  async function exportPdf() {
     setSaving(true);
     try {
       const data = await apiSend<{
@@ -371,7 +382,11 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
         outcomes: { op: string; applied: boolean; reason?: string; warning?: string }[];
         pdf: string;
         filename: string;
-      }>("/api/document/compose", "POST", { operations, allowCover });
+        // Covering is always permitted. A clean deletion is still attempted
+        // first and used wherever it works; this only decides what happens when
+        // the PDF makes deletion impossible, and refusing there stranded the
+        // user with a change they had already asked for twice.
+      }>("/api/document/compose", "POST", { operations, allowCover: true });
 
       const bytes = Uint8Array.from(atob(data.pdf), (c) => c.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
@@ -381,18 +396,16 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
       link.click();
       URL.revokeObjectURL(url);
 
-      const notable = data.outcomes.filter((o) => !o.applied || o.warning);
-      setReport(notable.length > 0 ? notable : null);
-
+      // Only genuine failures are worth interrupting for. Covering is an
+      // implementation detail of how the edit was made, not a problem to solve.
       const refused = data.outcomes.filter((o) => !o.applied);
-      setCanForce(refused.length > 0 && !allowCover);
+      setReport(refused.length > 0 ? dedupe(refused) : null);
+      setCovered(data.outcomes.filter((o) => o.applied && o.warning).length);
 
       if (refused.length > 0) {
         toast.error(`${data.applied} of ${data.total} changes applied.`, { duration: 7000 });
-      } else if (data.outcomes.some((o) => o.warning)) {
-        toast.success("Downloaded — some text was painted over rather than deleted.");
       } else {
-        toast.success("Downloaded — your design is untouched.");
+        toast.success("Downloaded.");
       }
     } catch (error) {
       toast.error(errorMessage(error, "Couldn't build that PDF."));
@@ -473,7 +486,7 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
         </Button>
         <Button
           size="sm"
-          onClick={() => exportPdf(false)}
+          onClick={exportPdf}
           loading={saving}
           loadingText="Building…"
           disabled={!dirty}
@@ -484,39 +497,34 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
       </div>
 
       {orphaned > 0 && (
-        <p className="border-b border-line bg-danger-soft px-4 py-2.5 text-[12.5px] leading-relaxed text-danger">
-          {orphaned} saved change{orphaned === 1 ? "" : "s"} no longer matched a line in this
-          document and {orphaned === 1 ? "was" : "were"} dropped. Make the change again and save.
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-sunk px-4 py-2.5">
+          <p className="text-[12.5px] leading-relaxed text-ink-muted">
+            {orphaned} older saved change{orphaned === 1 ? "" : "s"} didn&rsquo;t line up with this
+            document and {orphaned === 1 ? "was" : "were"} dropped.
+          </p>
+          <Button
+            size="sm"
+            variant="quiet"
+            onClick={() => {
+              setOrphaned(0);
+              apiSend("/api/document/edits", "PUT", { operations }).then(() =>
+                setSavedOps(JSON.stringify(operations)),
+              );
+            }}
+          >
+            Got it
+          </Button>
+        </div>
       )}
 
       {report && (
-        <div className="border-b border-line">
+        <div className="border-b border-line bg-danger-soft px-4 py-2.5">
           {report.map((item, i) => (
-            <p
-              key={i}
-              className={`px-4 py-2.5 text-[12.5px] leading-relaxed ${
-                item.applied ? "bg-sunk/60 text-ink-muted" : "bg-danger-soft text-danger"
-              }`}
-            >
-              <span className="font-medium">
-                {item.applied ? "Applied with a caveat" : "Not applied"}
-              </span>
-              {" — "}
-              {item.reason ?? item.warning}
+            <p key={i} className="text-[12.5px] leading-relaxed text-danger">
+              {item.count > 1 ? `${item.count} changes` : "One change"} couldn&rsquo;t be applied —{" "}
+              {item.reason}
             </p>
           ))}
-          {canForce && (
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-danger-soft px-4 pb-3">
-              <p className="max-w-[62ch] text-[12.5px] leading-relaxed text-danger">
-                This PDF won&rsquo;t let that text be deleted. You can paint over it instead — the
-                CV will look right, but the old words stay readable to software that scans it.
-              </p>
-              <Button size="sm" variant="secondary" onClick={() => exportPdf(true)}>
-                Paint over it and export
-              </Button>
-            </div>
-          )}
         </div>
       )}
 
@@ -601,6 +609,12 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
             ? `${operations.length} change${operations.length === 1 ? "" : "s"}${unsaved ? " · not saved" : " · saved"}`
             : "No changes yet — click any line on the page to start"}
         </p>
+
+        {covered > 0 && (
+          <p className="text-[12px] text-ink-faint" title="Some PDFs store text so it cannot be deleted. It is hidden instead, which looks right but leaves the old words readable to software that scans the file.">
+            {covered} line{covered === 1 ? "" : "s"} painted over rather than deleted
+          </p>
+        )}
 
         {dirty && (
           <Button
