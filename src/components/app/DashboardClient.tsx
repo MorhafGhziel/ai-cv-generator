@@ -8,6 +8,7 @@ import AppHeader from "@/components/app/AppHeader";
 import ApplicationCard from "@/components/app/ApplicationCard";
 import Composer from "@/components/app/Composer";
 import ModeSwitcher, { type WorkMode } from "@/components/app/ModeSwitcher";
+import CvEditor from "@/components/app/CvEditor";
 import OriginalDocumentCard from "@/components/app/OriginalDocumentCard";
 import type { ApplicationEntry, UsageRow } from "@/components/app/types";
 import CVPreview from "@/components/CVPreview";
@@ -52,6 +53,7 @@ export default function DashboardClient({ cvProfile }: { cvProfile: CVData }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageRow[]>([]);
   const [mode, setMode] = useState<WorkMode>("tailor");
+  const [editorOpen, setEditorOpen] = useState(false);
 
   // The printable document is rendered off-screen only while a download is in
   // flight, so the DOM never carries a hidden copy of every CV.
@@ -169,7 +171,11 @@ export default function DashboardClient({ cvProfile }: { cvProfile: CVData }) {
 
         <div className="mt-6">
           {mode === "edit" ? (
-            <OriginalDocumentCard standalone />
+            editorOpen ? (
+              <CvEditor onExit={() => setEditorOpen(false)} />
+            ) : (
+              <OriginalDocumentCard standalone onOpenEditor={() => setEditorOpen(true)} />
+            )
           ) : (
             <>
               <Composer

@@ -54,7 +54,13 @@ function downloadBase64(base64: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function OriginalDocumentCard({ standalone = false }: { standalone?: boolean } = {}) {
+export default function OriginalDocumentCard({
+  standalone = false,
+  onOpenEditor,
+}: {
+  standalone?: boolean;
+  onOpenEditor: () => void;
+}) {
   const [info, setInfo] = useState<DocumentInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(standalone);
@@ -211,6 +217,9 @@ export default function OriginalDocumentCard({ standalone = false }: { standalon
           >
             Original
           </Button>
+          <Button size="sm" onClick={onOpenEditor} icon={<PenIcon className="text-[1.05em]" />}>
+            Open editor
+          </Button>
           {!standalone && (
             <Button
               size="sm"
@@ -236,7 +245,11 @@ export default function OriginalDocumentCard({ standalone = false }: { standalon
             <div className="mt-6 border-t border-line pt-6">
               {detected.length > 0 && (
                 <>
-                  <p className="eyebrow mb-3">Values found in your PDF</p>
+                  <p className="eyebrow mb-1">Quick edits</p>
+                  <p className="mb-3 max-w-[58ch] text-[12.5px] leading-relaxed text-ink-muted">
+                    Common values, found automatically. For anything else — moving lines, adding
+                    sections, new pages — open the editor.
+                  </p>
                   <div className="space-y-4">
                     {detected.map((d) => (
                       <div key={d.field}>
