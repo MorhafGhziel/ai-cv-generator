@@ -338,7 +338,7 @@ export async function composePdf(
   return { bytes: await doc.save(), outcomes };
 }
 
-const MISSING = "That line is no longer in the document.";
+const MISSING = "that line is no longer in the document.";
 
 function styleOf(line: TextLine): { serif: boolean; bold: boolean; italic: boolean } {
   const run = line.runs[0];
@@ -346,10 +346,10 @@ function styleOf(line: TextLine): { serif: boolean; bold: boolean; italic: boole
 }
 
 const UNREADABLE =
-  "This PDF stores that text in a way we can't remove, so the old words would stay readable underneath. Left as it was — turn on \"Cover text we can't remove\" to change it anyway.";
+  "this PDF neither lets that text be deleted nor covered, so it was left as it was.";
 
 const COVERED =
-  "Painted over rather than deleted: the old text is hidden but still readable to software that parses the PDF.";
+  "Painted over rather than deleted, so the old words remain readable to software that parses the file.";
 
 /**
  * Draws text, wrapping only when it would otherwise run off the page. A CV line
