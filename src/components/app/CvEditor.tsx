@@ -129,6 +129,12 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
    * tracking system would parse both the old value and the new one.
    */
   const [allowCover, setAllowCover] = useState(false);
+  /** Kept on screen after an export: a toast is gone before it can be read. */
+  const [report, setReport] = useState<
+    { op: string; applied: boolean; reason?: string; warning?: string }[] | null
+  >(null);
+  /** Saved operations whose target line no longer exists in the document. */
+  const [orphaned, setOrphaned] = useState(0);
   /** Operations as last persisted, so "unsaved" means genuinely unsaved. */
   const [savedOps, setSavedOps] = useState<string>("[]");
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -153,6 +159,10 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
 
         // Replay saved work back into box state, so reopening the editor shows
         // the document as the user left it rather than as it was uploaded.
+        const known = new Set(meta.boxes.map((b) => b.id));
+        setOrphaned(
+          saved.operations.filter((o) => "id" in o && !known.has(o.id)).length,
+        );
         setBoxes(restore(meta.boxes, saved.operations));
         setExtraPages(saved.operations.filter((o) => o.op === "addPage").length);
         setSavedOps(JSON.stringify(saved.operations));
@@ -337,6 +347,8 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
       link.click();
       URL.revokeObjectURL(url);
 
+      setReport(data.outcomes.filter((o) => !o.applied || o.warning));
+
       const refused = data.outcomes.filter((o) => !o.applied);
       const covered = data.outcomes.filter((o) => o.applied && o.warning);
 
@@ -461,6 +473,33 @@ export default function CvEditor({ onExit }: { onExit: () => void }) {
         Click a line to select it, type to change it, drag it anywhere. Your original is never
         modified — every export rebuilds from it, so nothing here is permanent until you download.
       </p>
+
+      {orphaned > 0 && (
+        <p className="border-b border-line bg-danger-soft px-4 py-2.5 text-[12.5px] leading-relaxed text-danger">
+          {orphaned} saved change{orphaned === 1 ? "" : "s"} could not be matched to a line in this
+          document and {orphaned === 1 ? "has" : "have"} been dropped. Saved work from before the
+          text was regrouped no longer lines up — make the change again and save.
+        </p>
+      )}
+
+      {report && report.length > 0 && (
+        <ul className="divide-y divide-line border-b border-line">
+          {report.map((item, i) => (
+            <li
+              key={i}
+              className={`px-4 py-2.5 text-[12.5px] leading-relaxed ${
+                item.applied ? "bg-sunk/50 text-ink-muted" : "bg-danger-soft text-danger"
+              }`}
+            >
+              <span className="font-medium">
+                {item.applied ? "Applied with a caveat" : "Not applied"} — {item.op}
+              </span>
+              {": "}
+              {item.reason ?? item.warning}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {/* Pages */}
       <div className="max-h-[70vh] overflow-auto bg-sunk/60 p-6">
