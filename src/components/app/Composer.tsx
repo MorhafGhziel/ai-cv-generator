@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Button } from "@/components/ui/Button";
@@ -86,6 +87,18 @@ export default function Composer({
             <p className="mt-1 text-[13.5px] leading-[1.6] text-ink-muted">
               Paste the whole job posting — requirements, responsibilities, all of it. The more
               it says, the closer the match.
+            </p>
+            {/* People type instructions here ("add my phone number") and get a
+                CV back, because nothing said what the box was for. */}
+            <p className="mt-2 text-[12.5px] leading-[1.55] text-ink-faint">
+              This box takes job adverts only. To change details on your own CV, go to{" "}
+              <Link
+                href="/profile"
+                className="text-flame-ink underline decoration-flame/40 underline-offset-2 transition-colors hover:decoration-flame"
+              >
+                Your CV
+              </Link>
+              .
             </p>
           </div>
         </div>
