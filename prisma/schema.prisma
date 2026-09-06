@@ -49,6 +49,14 @@ model OriginalDocument {
   pageCount  Int
   uploadedAt DateTime @default(now())
 
+  /// The editor's saved operation list, replayed onto `bytes` on export.
+  ///
+  /// Storing the operations rather than an edited file keeps the upload
+  /// pristine: every export starts from the same bytes, so repeated saves
+  /// cannot compound, and discarding the list is a true revert.
+  edits   Json?
+  editsAt DateTime?
+
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
